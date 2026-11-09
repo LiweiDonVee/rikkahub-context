@@ -11,6 +11,11 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import me.rerere.ai.context.ContextSelection
+import me.rerere.ai.context.compileContext
+import me.rerere.ai.context.saveContextEdit
+import me.rerere.ai.core.MessageRole
+import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
@@ -56,7 +61,7 @@ class ContextWireIntegrationTest {
 
     @After fun cleanup() { database.close(); context.deleteDatabase(dbName) }
 
-    @Test fun mainProviderProtocolsReviewTheExactBodyBeforeTransport() = runBlocking {
+    @Test fun mainProviderProtocolsSendEditedSignedThinkingAndReviewedRawFields() = runBlocking {
         verify("openai_chat_completions", """{"id":"chat","model":"test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}""") { client, base, params ->
             OpenAIProvider(client).generateText(ProviderSetting.OpenAI(baseUrl = base, apiKey = "fixture-secret"), messages(), params).message.toText()
         }
@@ -108,9 +113,23 @@ class ContextWireIntegrationTest {
         assertEquals("", store.response(newRun.toString()))
     }
 
-    private fun messages() = listOf(UIMessage.user("wire-original"))
+    private val wireHistory by lazy {
+        val metadata = kotlinx.serialization.json.JsonObject(mapOf(
+            "signature" to kotlinx.serialization.json.JsonPrimitive("keep-signature"),
+            "thoughtSignature" to kotlinx.serialization.json.JsonPrimitive("keep-signature"),
+            "interactions_signature" to kotlinx.serialization.json.JsonPrimitive("keep-signature"),
+            "reasoning_id" to kotlinx.serialization.json.JsonPrimitive("rs_wire"),
+            "encrypted_content" to kotlinx.serialization.json.JsonPrimitive("keep-cipher"),
+        ))
+        val part = UIMessagePart.Reasoning("old signed thought", metadata = metadata)
+        val edited = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(part))
+            .saveContextEdit(listOf(part.copy(reasoning = "edited signed thought")))
+        compileContext(listOf(UIMessage.user("wire-original"), edited), ContextSelection()).messages
+    }
 
-    @Test fun unsignedInteractionThoughtOmissionIsVisibleBeforeSendingAndInTheSnapshot() = runBlocking {
+    private fun messages() = wireHistory
+
+    @Test fun unsignedInteractionThoughtIsSentAndRecordedWithoutPreflightRejection() = runBlocking {
         val response = """{"id":"interaction","model":"test","status":"completed","steps":[{"type":"model_output","content":[{"type":"text","text":"ok"}]}]}"""
         LoopbackProvider(response).use { server ->
             coroutineScope {
@@ -122,21 +141,60 @@ class ContextWireIntegrationTest {
                     val call = async(Dispatchers.IO) { GoogleProvider(client).generateText(ProviderSetting.Google(baseUrl = server.baseUrl, apiKey = "fixture", useInteractionsApi = true), history,
                         TextGenerationParams(model = Model(modelId = "test"), requestControl = store.control(conversationId, runId, Uuid.random(), "test", history, ContextSelection(), emptyList(), gate))) }
                     val preview = withTimeout(10_000) { gate.preview.filterNotNull().first() }
-                    assertFalse(preview.body.contains("manual unsigned thought"))
-                    assertTrue(preview.notices.any { it.contains("未在原生思考") })
+                    assertTrue(preview.body.contains("manual unsigned thought"))
+                    assertTrue(preview.notices.isEmpty())
                     assertEquals(0, server.bodies.size)
                     gate.confirm(preview.body)
                     assertEquals("ok", withTimeout(10_000) { call.await() }.message.toText())
-                    assertTrue(store.observe(conversationId).first().single { it.runId == runId.toString() }.exclusions.contains("未在原生思考"))
+                    assertEquals("[]", store.observe(conversationId).first().single { it.runId == runId.toString() }.exclusions)
                 } finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
             }
         }
+    }
+
+    @Test fun providerErrorsKeepActualStatusAndBodyForJsonAndPlainTextInBothModes() = runBlocking {
+        val protocols = listOf("openai_chat_completions", "openai_responses", "anthropic_messages", "google_generate_content", "google_interactions")
+        for (streaming in listOf(false, true)) {
+            for (raw in listOf("edited thinking rejected by endpoint", "{\"error\":{\"message\":\"edited thinking rejected\",\"code\":\"vendor_test\"}}")) {
+                LoopbackProvider(raw, streaming, responseCode = 400).use { server ->
+                    val client = OkHttpClient.Builder().addNetworkInterceptor(ContextRequestInterceptor()).build()
+                    try {
+                        for (protocol in protocols) {
+                            val runId = Uuid.random()
+                            val params = TextGenerationParams(model = Model(modelId = "test"),
+                                requestControl = store.control(conversationId, runId, Uuid.random(), "test", messages(), ContextSelection(), emptyList()))
+                            val failure = when (protocol) {
+                                "openai_chat_completions" -> rejected(OpenAIProvider(client), ProviderSetting.OpenAI(baseUrl = server.baseUrl, apiKey = "fixture"), params, streaming)
+                                "openai_responses" -> rejected(OpenAIProvider(client), ProviderSetting.OpenAI(baseUrl = server.baseUrl, apiKey = "fixture", useResponseApi = true), params, streaming)
+                                "anthropic_messages" -> rejected(ClaudeProvider(client), ProviderSetting.Claude(baseUrl = server.baseUrl, apiKey = "fixture"), params, streaming)
+                                "google_generate_content" -> rejected(GoogleProvider(client), ProviderSetting.Google(baseUrl = server.baseUrl, apiKey = "fixture"), params, streaming)
+                                else -> rejected(GoogleProvider(client), ProviderSetting.Google(baseUrl = server.baseUrl, apiKey = "fixture", useInteractionsApi = true), params, streaming)
+                            }
+                            assertTrue("$protocol: $failure", failure.message.orEmpty().contains("400"))
+                            assertTrue("$protocol: $failure", failure.message.orEmpty().contains(raw))
+                            assertTrue(server.bodies.poll(5, TimeUnit.SECONDS).contains("edited signed thought"))
+                            val record = store.observe(conversationId).first().single { it.runId == runId.toString() }
+                            assertEquals(400, record.responseCode)
+                            assertEquals("response_headers_received", record.transportStatus)
+                        }
+                    } finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
+                }
+            }
+        }
+    }
+
+    private suspend fun <T : ProviderSetting> rejected(provider: Provider<T>, setting: T, params: TextGenerationParams, streaming: Boolean): Exception {
+        try {
+            if (streaming) provider.streamText(setting, messages(), params).toList() else provider.generateText(setting, messages(), params)
+            throw AssertionError("An HTTP rejection must be reported")
+        } catch (failure: Exception) { return failure }
     }
 
     private suspend fun verify(
         protocol: String,
         response: String,
         streaming: Boolean = false,
+        history: List<UIMessage> = messages(),
         call: suspend (OkHttpClient, String, TextGenerationParams) -> String,
     ) = coroutineScope {
         LoopbackProvider(response, streaming).use { server ->
@@ -144,7 +202,7 @@ class ContextWireIntegrationTest {
             val runId = Uuid.random()
             val params = TextGenerationParams(
                 model = Model(modelId = "test"),
-                requestControl = store.control(conversationId, runId, Uuid.random(), "test", messages(), ContextSelection(), emptyList(), gate),
+                requestControl = store.control(conversationId, runId, Uuid.random(), "test", history, ContextSelection(), emptyList(), gate),
             )
             val client = OkHttpClient.Builder().addNetworkInterceptor(ContextRequestInterceptor()).build()
             try {
@@ -153,7 +211,10 @@ class ContextWireIntegrationTest {
                 assertEquals(protocol, preview.protocol)
                 assertEquals(0, server.bodies.size)
                 assertTrue(store.observe(conversationId).first().none { it.runId == runId.toString() })
-                val reviewed = "\n" + preview.body.replace("wire-original", "wire-edited") + "\n"
+                val reviewed = "\n" + preview.body.replace("wire-original", "wire-edited")
+                    .replace("\"model\":\"test\"", "\"model\":\"reviewed-model\"")
+                    .replace("keep-signature", "edited-signature").replace("keep-cipher", "edited-cipher") + "\n"
+                history.flatMap { it.parts }.filterIsInstance<UIMessagePart.Reasoning>().forEach { assertTrue(preview.body.contains(it.reasoning)) }
                 gate.confirm(reviewed)
                 assertEquals("ok", withTimeout(10_000) { generating.await() })
                 assertEquals(reviewed, server.bodies.poll(5, TimeUnit.SECONDS))
@@ -161,6 +222,7 @@ class ContextWireIntegrationTest {
                 assertEquals("response_headers_received", record.transportStatus)
                 assertEquals(1, record.attempts)
                 assertEquals(200, record.responseCode)
+                assertEquals(if (protocol == "google_generate_content") "test" else "reviewed-model", record.model)
                 assertEquals(reviewed, store.body(record.id))
                 assertFalse(store.body(record.id).contains("fixture-secret"))
             } finally {
@@ -171,7 +233,7 @@ class ContextWireIntegrationTest {
     }
 }
 
-internal class LoopbackProvider(@Volatile var response: String, private val stream: Boolean = false) : Closeable {
+internal class LoopbackProvider(@Volatile var response: String, private val stream: Boolean = false, @Volatile var responseCode: Int = 200) : Closeable {
     private val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     val baseUrl = "http://127.0.0.1:${socket.localPort}/v1"
     val bodies = LinkedBlockingQueue<String>()
@@ -196,7 +258,7 @@ internal class LoopbackProvider(@Volatile var response: String, private val stre
                 }
                 bodies.put(bytes.toString(Charsets.UTF_8))
                 val reply = response.toByteArray(Charsets.UTF_8)
-                val headers = "HTTP/1.1 200 OK\r\nContent-Type: ${if (stream) "text/event-stream" else "application/json"}\r\nContent-Length: ${reply.size}\r\nConnection: close\r\n\r\n"
+                val headers = "HTTP/1.1 $responseCode ${if (responseCode < 400) "OK" else "Provider rejected request"}\r\nContent-Type: ${if (stream) "text/event-stream" else "application/json"}\r\nContent-Length: ${reply.size}\r\nConnection: close\r\n\r\n"
                 client.getOutputStream().apply { write(headers.toByteArray(Charsets.US_ASCII)); write(reply); flush() }
             }
         } catch (e: java.net.SocketException) { if (!socket.isClosed) throw e }

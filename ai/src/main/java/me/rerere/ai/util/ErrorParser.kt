@@ -6,10 +6,22 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Response
 
 class HttpException(
     message: String
 ) : RuntimeException(message)
+
+/** Keep the actual HTTP failure, including non-JSON gateway responses. */
+fun providerFailure(response: Response?, failure: Throwable?): Throwable {
+    if (response == null) return failure ?: HttpException("Stream failed")
+    val body = runCatching { response.body.string() }.getOrElse { it.message }
+    return HttpException(
+        "HTTP ${response.code}: ${body?.takeIf { it.isNotBlank() } ?: failure?.message ?: response.message}"
+    ).apply {
+        if (failure != null) initCause(failure)
+    }
+}
 
 fun JsonElement.parseErrorDetail(): HttpException {
     return when (this) {

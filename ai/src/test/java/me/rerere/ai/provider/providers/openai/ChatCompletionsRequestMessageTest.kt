@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.ai.context.saveContextEdit
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.Modality
 import me.rerere.ai.ui.OpenRouterReasoningMetadata
@@ -555,6 +556,39 @@ class ChatCompletionsRequestMessageTest {
 
         assertFalse(assistant.containsKey("reasoning_details"))
         assertEquals("thinking", assistant["reasoning_content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `edited OpenRouter reasoning replaces visible details and retains opaque metadata`() {
+        val details = buildJsonArray {
+            add(buildJsonObject { put("type", "reasoning.text"); put("text", "old text"); put("signature", "keep-signature"); put("id", "native-id") })
+            add(buildJsonObject { put("type", "reasoning.summary"); put("summary", "old summary"); put("index", 1) })
+            add(buildJsonObject { put("type", "reasoning.encrypted"); put("data", "keep-cipher") })
+        }
+        val original = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Reasoning("old text and summary", metadata = OpenRouterReasoningMetadata(details).toMetadata())))
+        val edited = original.saveContextEdit(listOf((original.parts.single() as UIMessagePart.Reasoning).copy(reasoning = "new\n\nfull text")))
+        val body = invokeBuildMessages(listOf(edited), includeHistoryReasoning = false, includeOpenRouterReasoningDetails = true).single().jsonObject
+        val sent = body["reasoning_details"]!!.jsonArray
+        assertEquals("new\n\nfull text", sent[0].jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("keep-signature", sent[0].jsonObject["signature"]!!.jsonPrimitive.content)
+        assertEquals("native-id", sent[0].jsonObject["id"]!!.jsonPrimitive.content)
+        assertEquals("", sent[1].jsonObject["summary"]!!.jsonPrimitive.content)
+        assertEquals(details[2], sent[2])
+        assertFalse(body.toString().contains("old text"))
+        assertFalse(body.toString().contains("old summary"))
+        assertEquals(details, (edited.parts.single() as UIMessagePart.Reasoning).metadataAs<OpenRouterReasoningMetadata>()!!.reasoningDetails)
+        val foreign = invokeBuildMessages(listOf(edited), includeHistoryReasoning = false).single().jsonObject
+        assertEquals("new\n\nfull text", foreign["reasoning_content"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `edited reasoning with encrypted only OpenRouter details also sends the authored text`() {
+        val details = buildJsonArray { add(buildJsonObject { put("type", "reasoning.encrypted"); put("data", "cipher") }) }
+        val original = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Reasoning("old", metadata = OpenRouterReasoningMetadata(details).toMetadata())))
+        val edited = original.saveContextEdit(listOf((original.parts.single() as UIMessagePart.Reasoning).copy(reasoning = "edited")))
+        val body = invokeBuildMessages(listOf(edited), includeOpenRouterReasoningDetails = true).single().jsonObject
+        assertEquals(details, body["reasoning_details"])
+        assertEquals("edited", body["reasoning_content"]!!.jsonPrimitive.content)
     }
 
     // ==================== Helper Functions ====================

@@ -3,7 +3,7 @@
   <h1>RikkaHub Context Engineering</h1>
   <p><strong>Your context. Your decisions.</strong></p>
   <p>A native Android workspace for user-directed context engineering.</p>
-  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.2">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.3">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
 An independent fork of [RikkaHub](https://github.com/rikkahub/rikkahub) that puts context composition in your hands.
@@ -11,6 +11,8 @@ An independent fork of [RikkaHub](https://github.com/rikkahub/rikkahub) that put
 Edit messages, accessible reasoning, tool calls, tool results, and assistant presets. Assemble context across conversations, choose what to include, and inspect or modify the actual serialized request before sending it. You decide where to continue and when to run a tool.
 
 **Editing, selection, execution, and continuation are separate actions under your control.** Edit the current history directly, keep an alternative reply, or create a conversation branch.
+
+Edited Thinking is sent through the current provider with its metadata preserved. Successful replies render normally; failures report the endpoint’s actual error.
 
 ## What you can do
 
@@ -48,11 +50,11 @@ The input's Save and Preview action enters the same pipeline. Run Tool and Conti
 
 ## Install
 
-Current version: **3.1.2-context.2**. Android 8.0 / API 26 or later.
+Current version: **3.1.2-context.3**. Android 8.0 / API 26 or later.
 
-- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-arm64-v8a-debug.apk).
-- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-universal-debug.apk), with ARM64 and x86_64.
-- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/SHA256SUMS.txt).
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-arm64-v8a-debug.apk).
+- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-universal-debug.apk), with ARM64 and x86_64.
+- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/SHA256SUMS.txt).
 
 The current APKs use Debug signing and package `me.rerere.rikkahub.context.debug`, so they can coexist with official RikkaHub. Configure your own provider, endpoint and model in the existing settings.
 
@@ -60,7 +62,7 @@ The current APKs use Debug signing and package `me.rerere.rikkahub.context.debug
 
 The fork retains Material 3 Expressive, multiple providers, MCP, Skills, workspaces, multimodal messages, Markdown, search, memory and character-card imports. It extends the existing message, preset and branch systems.
 
-Thinking here means accessible or user-authored reasoning text. Each protocol has its own representation; the preview shows the actual body and explains confirmed omissions. Signed native parts can be kept, excluded, or explicitly converted to ordinary text. See [provider notes](docs/context-engineering/provider-compatibility.md).
+Thinking here means accessible or user-authored reasoning text. Each protocol has its own representation. Edited reasoning can be sent with its existing signatures and encrypted metadata; the preview shows the actual body. The endpoint decides what it accepts. See [provider notes](docs/context-engineering/provider-compatibility.md).
 
 ## Develop
 
@@ -73,7 +75,7 @@ pnpm --dir web-ui install --frozen-lockfile
 
 [Build guide](docs/context-engineering/build.md) · [Architecture](docs/context-engineering/architecture.md) · [Verification](docs/context-engineering/testing.md) · [Upstream maintenance](docs/context-engineering/upstream-maintenance.md) · [Contributing](CONTRIBUTING.md)
 
-The context.2 validation includes **833 JVM tests and 16 Android integration/UI tests passing**.
+The context.3 validation includes **838 JVM tests and 18 Android integration/UI tests passing**.
 
 ## Upstream and license
 

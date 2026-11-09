@@ -7,6 +7,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.rerere.ai.context.ContextMessageState
+import me.rerere.ai.context.ContextSelection
+import me.rerere.ai.context.compileContext
+import me.rerere.ai.context.saveContextEdit
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
@@ -73,6 +77,30 @@ class ResponseApiRequestMessageTest {
             ),
             reasoningLevel = reasoningLevel
         )
+    }
+
+    @Test
+    fun `edited and legacy encrypted reasoning sends its current visible text`() {
+        val part = UIMessagePart.Reasoning(
+            "old text",
+            reasoningType = ReasoningType.REASONING_TEXT,
+            metadata = OpenAIReasoningMetadata(reasoningId = "rs_keep", encryptedContent = "keep-cipher").toMetadata()
+        )
+        val original = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(part))
+        assertFalse(invokeBuildMessages(listOf(original)).single().jsonObject.containsKey("content"))
+        val edited = original.saveContextEdit(listOf(part.copy(reasoning = "edited\ntext")))
+        val legacy = original.copy(
+            parts = listOf(part.copy(reasoning = "legacy edited")),
+            contextState = ContextMessageState(invalidOpaqueParts = setOf(0))
+        )
+        for ((message, text) in listOf(edited to "edited\ntext", legacy to "legacy edited")) {
+            val body = invokeBuildMessages(
+                compileContext(listOf(message), ContextSelection()).messages
+            ).single().jsonObject
+            assertEquals("rs_keep", body["id"]!!.jsonPrimitive.content)
+            assertEquals("keep-cipher", body["encrypted_content"]!!.jsonPrimitive.content)
+            assertEquals(text, body["content"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content)
+        }
     }
 
     @Test

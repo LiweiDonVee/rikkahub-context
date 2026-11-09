@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import me.rerere.ai.context.ContextExclusion
 import me.rerere.ai.context.ContextMessageState
 import me.rerere.ai.context.inspectReasoningDelivery
@@ -114,6 +116,9 @@ class ContextRequestStore(val dao: ContextRequestDAO) {
             val delivery = inspectReasoningDelivery(messages, protocol, serializedBody)
             val finalBody = gate?.review(protocol, endpoint, serializedBody, reviewPurpose, delivery.notices) ?: serializedBody
             validateRequestEdit(serializedBody, finalBody)
+            val sentModel = if (protocol == "google_generate_content") model else {
+                ((JsonInstant.parseToJsonElement(finalBody) as? JsonObject)?.get("model") as? JsonPrimitive)?.contentOrNull ?: model
+            }
             val safe = sanitizeRequest(finalBody)
             val id = Uuid.random().toString()
             dao.save(
@@ -124,7 +129,7 @@ class ContextRequestStore(val dao: ContextRequestDAO) {
                     responseMessageId = responseMessageId.toString(),
                     protocol = protocol,
                     endpoint = sanitizedEndpoint(endpoint),
-                    model = model,
+                    model = sentModel,
                     createdAt = System.currentTimeMillis(),
                     selection = JsonInstant.encodeToString(selection),
                     sources = JsonInstant.encodeToString(messages.flatMap { message ->

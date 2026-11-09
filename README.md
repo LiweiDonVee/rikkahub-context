@@ -3,7 +3,7 @@
   <h1>RikkaHub Context Engineering</h1>
   <p><strong>上下文完全由你掌控，下一步由你决定。</strong></p>
   <p>原生 Android 上下文工程工作台</p>
-  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.2">下载 APK</a> · <a href="docs/context-engineering/user-guide.zh-CN.md">使用指南</a> · <a href="README_EN.md">English</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.3">下载 APK</a> · <a href="docs/context-engineering/user-guide.zh-CN.md">使用指南</a> · <a href="README_EN.md">English</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
 基于 [RikkaHub](https://github.com/rikkahub/rikkahub) 的独立 Fork，让你自主组织模型看到的内容，并直接干预交互过程。
@@ -11,6 +11,8 @@
 消息、Thinking、工具调用、工具结果和助手预填充都可以编辑。你可以跨会话组合信息，选择本次携带的历史、Skills 和工具记录，检查并修改真实请求正文，再决定发送、运行工具或从某个位置继续。
 
 **编辑、选择、执行和继续，各自独立，由你调度。** 直接修改是默认路径，回复版本和会话分支随时可用。
+
+编辑后的 Thinking 按当前 Provider 发送。客户端保留你的修改和原始 metadata，接口成功就正常渲染，失败就报告实际错误。
 
 ## 你可以怎样使用
 
@@ -48,11 +50,11 @@
 
 ## 安装
 
-当前版本：**3.1.2-context.2**。支持 Android 8.0 / API 26 及以上。
+当前版本：**3.1.2-context.3**。支持 Android 8.0 / API 26 及以上。
 
-- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-arm64-v8a-debug.apk)：普通 ARM64 手机。
-- [通用 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-universal-debug.apk)：包含 ARM64 和 x86_64。
-- [版本与更新记录](https://github.com/LiweiDonVee/rikkahub-context/releases) · [校验文件](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/SHA256SUMS.txt)
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-arm64-v8a-debug.apk)：普通 ARM64 手机。
+- [通用 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-universal-debug.apk)：包含 ARM64 和 x86_64。
+- [版本与更新记录](https://github.com/LiweiDonVee/rikkahub-context/releases) · [校验文件](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/SHA256SUMS.txt)
 
 本次分发使用 Debug 签名。应用包名为 `me.rerere.rikkahub.context.debug`，可与官方 RikkaHub 并存。安装后在原有设置中配置自己的 Provider、端点和模型；模型、API 和上下文组织方式由你选择。
 
@@ -60,14 +62,14 @@
 
 保留原生 Material 3 Expressive 界面、多 Provider、MCP、Skills、工作区、多模态、Markdown、搜索、记忆和角色卡导入，并扩展原有消息、预填充和会话分支机制。
 
-Thinking 是客户端可访问或由你编写的思考文本。不同协议使用自己的字段；预览会显示实际表示，并说明确定省略的内容。签名对象可保留、排除或显式转为正文，详见 [Provider 说明](docs/context-engineering/provider-compatibility.md)。
+Thinking 是客户端可访问或由你编写的思考文本。不同协议使用自己的字段；签名和密文随原有 metadata 保留，修改后可直接预览和发送。是否接受由实际端点决定，详见 [Provider 说明](docs/context-engineering/provider-compatibility.md)。
 
 ## 文档与开发
 
 - [使用指南](docs/context-engineering/user-guide.zh-CN.md)：七条完整操作流程与原生预填充。
 - [构建指南](docs/context-engineering/build.md)：环境、构建、测试和签名。
 - [架构](docs/context-engineering/architecture.md)：历史、上下文编译、真实请求和回复归档。
-- [验证记录](docs/context-engineering/testing.md)：**833 项 JVM 测试、16 项 Android 集成/UI 测试通过**。
+- [验证记录](docs/context-engineering/testing.md)：**838 项 JVM 测试、18 项 Android 集成/UI 测试通过**。
 - [上游同步](docs/context-engineering/upstream-maintenance.md) · [更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
 ```sh

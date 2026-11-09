@@ -36,7 +36,7 @@ import me.rerere.ai.context.contextText
 import me.rerere.ai.context.restoreContextOriginal
 import me.rerere.ai.context.saveContextEdit
 import me.rerere.ai.context.validateToolEdit
-import me.rerere.ai.context.hasOpaqueState
+import me.rerere.ai.context.withUserReasoning
 import me.rerere.rikkahub.data.model.copyPresetMessageFiles
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -1334,11 +1334,8 @@ class ChatService(
         check(expectedMessage == null || original == expectedMessage) { "消息已发生变化，请重新打开编辑器" }
         val changedCalls = parts.filterIsInstance<UIMessagePart.Tool>().filter { edited ->
             val previous = original.getTools().find { it.toolCallId == edited.toolCallId }
-            previous == null || previous.toolName != edited.toolName || previous.input != edited.input
-        }
-        if (changedCalls.isNotEmpty()) {
-            val authorized = authorizedContextTools(conversationId)
-            changedCalls.forEach { validateToolEdit(it, authorized) }
+            previous == null || previous.toolName != edited.toolName || previous.input != edited.input ||
+                (previous.isExecuted && !edited.isExecuted)
         }
         editContextHistory(conversationId) { conversation ->
             val node = conversation.getMessageNodeByMessageId(messageId) ?: throw NotFoundException("Message no longer exists")
@@ -1374,15 +1371,6 @@ class ChatService(
     }
 
     suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>) {
-        insertContextMessages(conversationId, afterMessageId, messages, validateNewTools = true)
-    }
-
-    private suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>, validateNewTools: Boolean) {
-        val calls = messages.flatMap { it.getTools() }
-        if (validateNewTools && calls.isNotEmpty()) {
-            val tools = authorizedContextTools(conversationId)
-            calls.forEach { validateToolEdit(it, tools) }
-        }
         editContextHistory(conversationId) { conversation ->
             val index = if (afterMessageId == null) -1 else conversation.messageNodes.indexOfFirst { it.currentMessage.id == afterMessageId }
             require(afterMessageId == null || index >= 0) { "Insertion position no longer exists" }
@@ -1404,54 +1392,18 @@ class ChatService(
     suspend fun copyContextMessages(sourceId: Uuid, messageIds: Set<Uuid>, targetId: Uuid, afterMessageId: Uuid?, mode: String) {
         require(sourceId != targetId) { "Select another conversation as the copy destination" }
         val source = getConversation(sourceId) ?: throw NotFoundException("Source conversation not found")
-        val target = getConversation(targetId) ?: throw NotFoundException("Target conversation not found")
+        getConversation(targetId) ?: throw NotFoundException("Target conversation not found")
         val originals = source.currentMessages.filter { it.id in messageIds }
         require(originals.size == messageIds.size && originals.isNotEmpty()) { "Selected source messages changed" }
         require(mode in setOf("original", "text", "merged"))
-        if (mode == "original") {
-            require(originals.all { it.contextState.invalidOpaqueParts.isEmpty() }) { "Edited signed content cannot be copied as valid native data. Choose text conversion." }
-            val settings = settingsStore.awaitLoaded()
-            val destination = settings.getChatModelOf(target)?.findProvider(settings.providers)
-            originals.forEach { message ->
-                message.parts.forEach { part ->
-                    require((part !is UIMessagePart.Audio && part !is UIMessagePart.Video) ||
-                        (destination is ProviderSetting.Google && !(destination.useInteractionsApi && !destination.vertexAI && message.role == MessageRole.ASSISTANT))
-                    ) { "The destination serializer cannot preserve this audio/video part. Choose text conversion or a compatible Google conversation." }
-                    if (part is UIMessagePart.Tool) require(part.output.all { it is UIMessagePart.Text || it is UIMessagePart.Image }) {
-                        "This tool result contains a type the destination serializer cannot preserve. Choose explicit text conversion."
-                    }
-                    require(part !is UIMessagePart.ToolCall && part !is UIMessagePart.ToolResult && part !is UIMessagePart.Search) {
-                        "Legacy protocol parts must be converted to text before copying."
-                    }
-                }
-            }
-        }
-        if (mode == "original" && originals.any { it.parts.any(::hasOpaqueState) }) {
-            require(originals.all { it.contextState.invalidOpaqueParts.isEmpty() }) { "Edited signed content cannot be copied as valid native data. Choose text conversion." }
-            val settings = settingsStore.awaitLoaded()
-            fun protocol(provider: ProviderSetting?): String? = when (provider) {
-                is ProviderSetting.OpenAI -> if (provider.useResponseApi) "responses" else "chat_completions"
-                is ProviderSetting.Google -> if (provider.useInteractionsApi && !provider.vertexAI) "google_interactions" else "google_content"
-                is ProviderSetting.Claude -> "claude_messages"
-                is ProviderSetting.Account -> "responses"
-                null -> null
-            }
-            val from = protocol(settings.getChatModelOf(source)?.findProvider(settings.providers))
-            val to = protocol(settings.getChatModelOf(target)?.findProvider(settings.providers))
-            require(from != null && from == to) { "Provider-specific signed/server content cannot be copied natively to this provider. Choose explicit text conversion." }
-        }
-        val usedCalls = target.currentMessages.flatMap { it.getTools() }.mapTo(mutableSetOf()) { it.toolCallId }
         val copies = originals.map { message ->
             val idMap = (if (mode == "original") message.getTools() else emptyList()).associate { tool ->
-                val newId = if (hasOpaqueState(tool)) {
-                    require(tool.toolCallId !in usedCalls) { "Signed tool identifier collides in the destination. Choose text conversion." }
-                    tool.toolCallId
-                } else "ctx_${Uuid.random()}"
-                usedCalls += newId
+                val newId = "ctx_${Uuid.random()}"
                 tool.toolCallId to newId
             }
-            val parts = if (mode == "original") message.parts.map { part ->
-                val cloned = part.mapLocalFileUrls(::copyChatFile)
+            val parts = if (mode == "original") message.parts.mapIndexed { index, part ->
+                val content = if (part is UIMessagePart.Reasoning && index in message.contextState.invalidOpaqueParts) part.withUserReasoning(part.reasoning) else part
+                val cloned = content.mapLocalFileUrls(::copyChatFile)
                 if (cloned is UIMessagePart.Tool) cloned.copy(toolCallId = idMap.getValue(cloned.toolCallId), approvalState = ToolApprovalState.Pending) else cloned
             } else listOf(UIMessagePart.Text(message.parts.joinToString("\n") { it.contextText() }))
             message.copy(
@@ -1464,7 +1416,7 @@ class ChatService(
             contextState = me.rerere.ai.context.ContextMessageState(sources = copies.flatMap { it.contextState.sources }),
         )) else copies
         // Historical calls are context data; copying them neither authorizes nor executes a tool.
-        insertContextMessages(targetId, afterMessageId, final, validateNewTools = false)
+        insertContextMessages(targetId, afterMessageId, final)
     }
 
     /** Explicit tool-only action. A new attempt is persisted; no model request is made. */

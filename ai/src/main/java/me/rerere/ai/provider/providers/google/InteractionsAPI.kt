@@ -53,8 +53,7 @@ import me.rerere.ai.util.encodeBase64
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
 import me.rerere.ai.util.mergeCustomHeaders
-import me.rerere.ai.util.parseErrorDetail
-import me.rerere.ai.util.stringSafe
+import me.rerere.ai.util.providerFailure
 import me.rerere.common.http.await
 import me.rerere.common.http.jsonArrayOrNull
 import me.rerere.common.http.jsonObjectOrNull
@@ -139,20 +138,7 @@ internal class InteractionsAPI(
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                var exception = t
-
-                val bodyRaw = response?.body?.stringSafe()
-                try {
-                    if (!bodyRaw.isNullOrBlank()) {
-                        exception = json.parseToJsonElement(bodyRaw).parseErrorDetail()
-                    } else if (t == null && response != null) {
-                        exception = Exception("Unknown error: ${response.code}")
-                    }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "onFailure: failed to parse from $bodyRaw")
-                } finally {
-                    close(exception ?: Exception("Stream failed"))
-                }
+                close(providerFailure(response, t))
             }
 
             override fun onClosed(eventSource: EventSource) {
@@ -309,13 +295,11 @@ internal class InteractionsAPI(
                 is PartGroup.Content -> group.parts.forEach { part ->
                     when (part) {
                         is UIMessagePart.Reasoning -> {
-                            // 没有 Interactions 签名的思考来自其他协议，无法作为 thought step 回传
                             val signature = part.metadataAs<GoogleInteractionsMetadata>()?.signature
-                                ?: return@forEach
                             flushContent()
                             add(buildJsonObject {
                                 put("type", "thought")
-                                put("signature", signature)
+                                signature?.let { put("signature", it) }
                                 if (part.reasoning.isNotEmpty()) {
                                     putJsonArray("summary") {
                                         add(buildJsonObject {

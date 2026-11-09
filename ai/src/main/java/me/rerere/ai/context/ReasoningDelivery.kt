@@ -38,12 +38,8 @@ fun inspectReasoningDelivery(messages: List<UIMessage>, protocol: String, body: 
     walk(json.parseToJsonElement(body))
     val omissions = messages.flatMap { message -> message.parts.mapIndexedNotNull { index, part ->
         if (part is UIMessagePart.Reasoning && part.reasoning.isNotBlank() && visible.none { part.reasoning in it })
-            ContextExclusion(message.id.toString(), index, "Provider 未在原生思考文本字段中携带此段可见内容；如需作为文字发送，可在编辑器中转为正文。")
+            ContextExclusion(message.id.toString(), index, "实际 $protocol 请求的原生思考字段未包含这段文本。")
         else null
     } }
-    val notices = omissions.map { it.reason }.distinct().toMutableList()
-    if (protocol in setOf("anthropic_messages", "openai_responses") && messages.any { message -> message.parts.any {
-        it is UIMessagePart.Reasoning && it.reasoning.isNotBlank() && !hasOpaqueState(it)
-    } }) notices += "包含无签名的手工思考。预览展示其协议表示，能否接受由接口决定；也可显式转为正文。"
-    return ReasoningDelivery(omissions, notices)
+    return ReasoningDelivery(omissions, omissions.map { it.reason }.distinct())
 }

@@ -21,6 +21,7 @@ data class ContextMessageState(
     val excludedParts: Set<Int> = emptySet(),
     val sources: List<ContextSource> = emptyList(),
     val toolRuns: List<ToolRunRecord> = emptyList(),
+    /** Legacy edit markers, read so previously edited reasoning can be sent with its current text. */
     val invalidOpaqueParts: Set<Int> = emptySet(),
     val manualToolExecution: Boolean = false,
     val requestSelection: ContextSelection? = null,
@@ -88,15 +89,14 @@ fun compileContext(history: List<UIMessage>, selection: ContextSelection): Compi
                 exclusions += ContextExclusion(id, index, reason)
                 null
             } else {
-                require(index !in message.contextState.invalidOpaqueParts) {
-                    "Edited signed/encrypted provider part $index cannot be replayed. Exclude it or convert it to text."
-                }
                 if (part is UIMessagePart.Tool) {
                     require(runCatching { json.parseToJsonElement(part.input) is JsonObject }.getOrDefault(false)) {
                         "Historical tool ${part.toolCallId} has invalid arguments. Edit or exclude it before sending."
                     }
                 }
-                part
+                if (part is UIMessagePart.Reasoning && index in message.contextState.invalidOpaqueParts) {
+                    part.withUserReasoning(part.reasoning)
+                } else part
             }
         }
         if (parts.isEmpty()) {
@@ -118,6 +118,9 @@ fun UIMessage.contextDraft() = parts.mapIndexed { index, part -> ContextPartDraf
 
 const val USER_AUTHORED_REASONING = "context_user_authored"
 
+val UIMessagePart.Reasoning.isUserAuthored: Boolean
+    get() = metadata?.get(USER_AUTHORED_REASONING)?.jsonPrimitive?.content == "true"
+
 fun UIMessagePart.Reasoning.withUserReasoning(text: String) = copy(
     reasoning = text,
     metadata = JsonObject(metadata.orEmpty() + (USER_AUTHORED_REASONING to JsonPrimitive(true))),
@@ -129,23 +132,19 @@ fun UIMessage.saveContextEdit(parts: List<UIMessagePart>, originalIndices: List<
     require(originalIndices.size == parts.size)
     require(originalIndices.filterNotNull().distinct().size == originalIndices.filterNotNull().size) { "A source part cannot be used twice" }
     require(originalIndices.filterNotNull().all { it in this.parts.indices }) { "Source part no longer exists" }
+    val editedParts = parts.mapIndexed { index, part ->
+        val sourceIndex = originalIndices[index]
+        val previous = sourceIndex?.let { this.parts[it] }
+        if (part is UIMessagePart.Reasoning &&
+            (part.reasoning != (previous as? UIMessagePart.Reasoning)?.reasoning || sourceIndex in contextState.invalidOpaqueParts)
+        ) part.withUserReasoning(part.reasoning) else part
+    }
     return copy(
-    parts = parts,
+    parts = editedParts,
     contextState = contextState.copy(
         originalParts = contextState.originalParts ?: this.parts,
         excludedParts = parts.indices.filterTo(mutableSetOf()) { originalIndices[it] in contextState.excludedParts },
-        invalidOpaqueParts = parts.indices.filterTo(mutableSetOf()) { index ->
-            val part = parts[index]
-            if (part is UIMessagePart.Text && !hasOpaqueState(part)) false else {
-                val sourceIndex = originalIndices[index]
-                val previous = sourceIndex?.let { this.parts[it] }
-                if (part == previous) sourceIndex in contextState.invalidOpaqueParts else {
-                    if (part is UIMessagePart.Tool && previous is UIMessagePart.Tool &&
-                        part.toolName == previous.toolName && part.input == previous.input && part.metadata == previous.metadata
-                    ) sourceIndex in contextState.invalidOpaqueParts else previous?.let(::hasOpaqueState) == true || hasOpaqueState(part)
-                }
-            }
-        },
+        invalidOpaqueParts = emptySet(),
     ),
 )
 }

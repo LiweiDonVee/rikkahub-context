@@ -22,17 +22,19 @@ class ContextDraftTest {
         assertEquals(original, updated.restoreContextOriginal())
     }
 
-    @Test fun `moves and additions remap exclusions and invalid signatures by source part`() {
+    @Test fun `moves remap exclusions and preserve previously edited signed reasoning`() {
         val signed = UIMessagePart.Reasoning("signed", metadata = JsonObject(mapOf("signature" to JsonPrimitive("opaque"))))
         val original = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(signed, UIMessagePart.Text("excluded")),
             contextState = ContextMessageState(excludedParts = setOf(1), invalidOpaqueParts = setOf(0)))
         val draft = original.contextDraft()
         val updated = original.saveContextDraft(listOf(ContextPartDraft(UIMessagePart.Reasoning("new")), draft[1], draft[0]))
         assertEquals(setOf(1), updated.contextState.excludedParts)
-        assertEquals(setOf(2), updated.contextState.invalidOpaqueParts)
+        assertTrue(updated.contextState.invalidOpaqueParts.isEmpty())
+        assertTrue((updated.parts[2] as UIMessagePart.Reasoning).isUserAuthored)
         val removed = updated.saveContextDraft(updated.contextDraft().drop(1))
         assertEquals(setOf(0), removed.contextState.excludedParts)
-        assertEquals(setOf(1), removed.contextState.invalidOpaqueParts)
+        assertTrue(removed.contextState.invalidOpaqueParts.isEmpty())
+        assertEquals("signed", (removed.parts[1] as UIMessagePart.Reasoning).reasoning)
     }
 
     @Test fun `inserting a plain thought before a signed part does not invalidate either`() {
@@ -41,7 +43,9 @@ class ContextDraftTest {
         val updated = original.saveContextDraft(listOf(ContextPartDraft(UIMessagePart.Reasoning("new"))) + original.contextDraft())
         assertTrue(updated.contextState.invalidOpaqueParts.isEmpty())
         val changed = updated.contextDraft().toMutableList().apply { this[1] = this[1].copy(part = signed.copy(reasoning = "changed")) }
-        assertEquals(setOf(1), updated.saveContextDraft(changed).contextState.invalidOpaqueParts)
+        val edited = updated.saveContextDraft(changed)
+        assertTrue(edited.contextState.invalidOpaqueParts.isEmpty())
+        assertEquals("changed", (compileContext(listOf(edited), ContextSelection()).messages.single().parts[1] as UIMessagePart.Reasoning).reasoning)
     }
 
     @Test fun `delete all parts is reversible and compilation records the empty omission`() {

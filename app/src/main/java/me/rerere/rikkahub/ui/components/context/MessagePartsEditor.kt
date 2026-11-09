@@ -85,11 +85,9 @@ fun MessagePartsEditor(
                     try {
                         var draft = inputs.map { it.compile() }
                         val changedTools = draft.map { it.part }.filterIsInstance<UIMessagePart.Tool>().filter { tool ->
-                            message.getTools().none { it.toolCallId == tool.toolCallId && it.toolName == tool.toolName && it.input == tool.input }
+                            message.getTools().none { it.toolCallId == tool.toolCallId && it.toolName == tool.toolName && it.input == tool.input && !(it.isExecuted && !tool.isExecuted) }
                         }
                         if (changedTools.isNotEmpty()) {
-                            val tools = loadTools()
-                            changedTools.forEach { validateToolEdit(it, tools) }
                             draft = draft.map { entry ->
                                 val call = entry.part as? UIMessagePart.Tool
                                 if (call != null && changedTools.any { it.toolCallId == call.toolCallId }) entry.copy(part = call.copy(approvalState = ToolApprovalState.Pending)) else entry
@@ -176,7 +174,6 @@ fun MessagePartsEditor(
                             }, minLines = 4, maxLines = 12, enabled = !saving)
                         }
                         if (input.draft.part is UIMessagePart.Reasoning) Text("这是可编辑的上下文文本。实际携带方式由协议决定，可在发送前预览。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (hasOpaqueState(input.draft.part)) Text("此内容带有服务商签名；修改后可排除或转为正文。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

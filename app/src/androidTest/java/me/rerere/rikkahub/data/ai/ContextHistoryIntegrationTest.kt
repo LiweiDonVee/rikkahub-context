@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import me.rerere.ai.context.ContextMessageState
 import me.rerere.ai.context.saveContextEdit
+import me.rerere.ai.context.withUserReasoning
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -63,8 +64,8 @@ class ContextHistoryIntegrationTest {
         val later = UIMessage.user("keep later history")
         val conversation = persist(listOf(original, later))
         val parts = original.parts.toMutableList().also {
-            it[0] = (it[0] as UIMessagePart.Reasoning).copy(reasoning = "edited\n\nthinking")
-            it[1] = (it[1] as UIMessagePart.Tool).copy(output = listOf(UIMessagePart.Text("edited result")))
+            it[0] = (it[0] as UIMessagePart.Reasoning).withUserReasoning("edited\n\nthinking")
+            it[1] = (it[1] as UIMessagePart.Tool).copy(toolName = "user_defined_tool", input = "{\"custom\":1}", output = listOf(UIMessagePart.Text("edited result")), approvalState = me.rerere.ai.ui.ToolApprovalState.Pending)
         }
         service.saveContextMessage(conversation.id, original.id, parts)
         val saved = repository.getConversationById(conversation.id)!!
@@ -74,6 +75,7 @@ class ContextHistoryIntegrationTest {
         assertNull(service.getGenerationJobStateFlow(conversation.id).first())
         assertTrue(service.contextRequestStore.observe(conversation.id).first().isEmpty())
         assertTrue(saved.currentMessages.first().contextState.toolRuns.isEmpty())
+        assertTrue(saved.currentMessages.first().contextState.manualToolExecution)
         service.restoreContextMessage(conversation.id, original.id)
         assertEquals(original.parts, repository.getConversationById(conversation.id)!!.currentMessages.first().parts)
     }
@@ -81,7 +83,12 @@ class ContextHistoryIntegrationTest {
     @Test fun noncontiguousNativeCopyInsertsAtTheAnchorAndKeepsSourceUnchanged() = runBlocking {
         val user = UIMessage.user("question")
         val skip = UIMessage.assistant("do not copy")
-        val answer = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Reasoning("thinking"), UIMessagePart.Tool("call", "read", "{}", listOf(UIMessagePart.Text("result"))), UIMessagePart.Text("answer")))
+        val signature = kotlinx.serialization.json.JsonObject(mapOf("signature" to kotlinx.serialization.json.JsonPrimitive("native-signature")))
+        val answer = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(
+            UIMessagePart.Reasoning("thinking", metadata = signature),
+            UIMessagePart.Tool("call", "read", "{}", listOf(UIMessagePart.Text("result"), UIMessagePart.Reasoning("tool thought")), metadata = signature),
+            UIMessagePart.Text("answer"), UIMessagePart.Audio("https://example.test/audio.mp3"), UIMessagePart.Video("https://example.test/video.mp4"),
+        ))
         val source = persist(listOf(user, skip, answer))
         val beginning = UIMessage.user("beginning")
         val end = UIMessage.assistant("end")
@@ -95,25 +102,60 @@ class ContextHistoryIntegrationTest {
         assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), copied.subList(1, 3).map { it.role })
         assertNotEquals(user.id, copied[1].id)
         assertNotEquals("call", copied[2].getTools().single().toolCallId)
-        assertEquals("result", (copied[2].getTools().single().output.single() as UIMessagePart.Text).text)
+        assertEquals("result", (copied[2].getTools().single().output.first() as UIMessagePart.Text).text)
+        assertEquals(answer.parts.filterNot { it is UIMessagePart.Tool }, copied[2].parts.filterNot { it is UIMessagePart.Tool })
+        assertEquals(answer.getTools().single().output, copied[2].getTools().single().output)
+        assertEquals(signature, copied[2].getTools().single().metadata)
         assertEquals(source.id.toString(), copied[2].contextState.sources.single().conversationId)
         assertNull(service.getGenerationJobStateFlow(target.id).first())
     }
 
-    @Test fun removingSignatureMetadataDoesNotLaunderInvalidNativeContentThroughCopy() = runBlocking {
+    @Test fun editedNativeReasoningCanBeCopiedWithoutCompatibilityPreflight() = runBlocking {
         val original = UIMessagePart.Reasoning("old", metadata = kotlinx.serialization.json.JsonObject(mapOf("signature" to kotlinx.serialization.json.JsonPrimitive("opaque"))))
         val edited = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(original)).saveContextEdit(listOf(original.copy(reasoning = "edited", metadata = null)))
         val source = persist(listOf(edited))
         val target = persist(listOf(UIMessage.user("target")))
-        try {
-            service.copyContextMessages(source.id, setOf(edited.id), target.id, null, "original")
-            fail("Invalid signed content must not become a valid native copy")
-        } catch (_: IllegalArgumentException) { }
+        service.copyContextMessages(source.id, setOf(edited.id), target.id, null, "original")
+        val native = repository.getConversationById(target.id)!!.currentMessages.first().parts.single() as UIMessagePart.Reasoning
+        assertEquals("edited", native.reasoning)
+        assertEquals(edited.parts.single().metadata, native.metadata)
         service.copyContextMessages(source.id, setOf(edited.id), target.id, null, "text")
         val copied = repository.getConversationById(target.id)!!.currentMessages.first()
         assertTrue(copied.parts.single() is UIMessagePart.Text)
         assertTrue(copied.toText().contains("edited"))
         assertEquals(1, repository.getConversationById(source.id)!!.currentMessages.size)
+    }
+
+    @Test fun clearingACompletedResultDoesNotReplayItWhenAnotherCallIsApproved() = runBlocking {
+        val settings = GlobalContext.get().get<me.rerere.rikkahub.data.datastore.SettingsStore>()
+        settings.awaitLoaded()
+        LoopbackProvider("{}").use { server ->
+            val model = me.rerere.ai.provider.Model(modelId = "fixture-model", abilities = listOf(me.rerere.ai.provider.ModelAbility.TOOL))
+            val provider = me.rerere.ai.provider.ProviderSetting.OpenAI(name = "Pending fixture", models = listOf(model), baseUrl = server.baseUrl)
+            val assistant = me.rerere.rikkahub.data.model.Assistant(name = "Pending fixture", chatModelId = model.id, streamOutput = false, localTools = listOf(me.rerere.rikkahub.data.ai.tools.local.LocalToolOption.JavascriptEngine))
+            settings.update { it.copy(providers = it.providers + provider, assistants = it.assistants + assistant) }
+            val completed = UIMessagePart.Tool("a", "eval_javascript", """{"code":"throw new Error('A must stay pending')"}""", listOf(UIMessagePart.Text("previous result")))
+            val pending = UIMessagePart.Tool("b", "eval_javascript", """{"code":"21 * 2"}""", approvalState = me.rerere.ai.ui.ToolApprovalState.Pending)
+            val message = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(completed, pending))
+            val conversation = Conversation.ofId(Uuid.random(), assistantId = assistant.id, messages = listOf(MessageNode.of(UIMessage.user("test")), MessageNode.of(message)))
+            repository.insertConversation(conversation); fixtures += conversation.id
+            try {
+                service.saveContextMessage(conversation.id, message.id, listOf(completed.copy(output = emptyList()), pending))
+                val saved = service.getConversation(conversation.id)!!.currentMessages.last()
+                assertTrue(saved.contextState.manualToolExecution)
+                assertTrue(saved.getTools().all { it.isPending })
+                service.handleToolApproval(conversation.id, "b", approved = true)
+                withTimeout(10_000) { service.getConversationFlow(conversation.id).first { current -> current.currentMessages.last().getTools().any { it.toolCallId == "b" && it.isExecuted } } }
+                withTimeout(10_000) { service.getGenerationJobStateFlow(conversation.id).first { it == null } }
+                val calls = service.getConversation(conversation.id)!!.currentMessages.last().getTools()
+                assertTrue(calls.first().isPending)
+                assertFalse(calls.first().isExecuted)
+                assertTrue((calls.last().output.single() as UIMessagePart.Text).text.contains("42"))
+                assertTrue(server.bodies.isEmpty())
+            } finally {
+                settings.update { current -> current.copy(providers = current.providers.filterNot { it.id == provider.id }, assistants = current.assistants.filterNot { it.id == assistant.id }) }
+            }
+        }
     }
 
     @Test fun editedToolRunsLocallyAndBreakpointRequestsPreserveTheReviewedProjection() = runBlocking {
@@ -197,6 +239,25 @@ class ContextHistoryIntegrationTest {
                 assertEquals(3, server.bodies.size)
                 assertEquals("new-call", saved.last().getTools().single().toolCallId)
                 assertTrue(saved.last().toText().contains("fresh answer"))
+
+                server.response = """{"id":"unknown","model":"fixture-model","choices":[{"message":{"role":"assistant","tool_calls":[{"id":"unknown-call","type":"function","function":{"name":"context_unknown_tool","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"""
+                val unknownGate = service.previewContextRequest(conversation.id, original.id, selection = selection)
+                val unknownPreview = withTimeout(10_000) { unknownGate.preview.filterNotNull().first() }
+                val raw = me.rerere.rikkahub.utils.JsonInstant.parseToJsonElement(unknownPreview.body) as kotlinx.serialization.json.JsonObject
+                val definitions = (raw["tools"] as? kotlinx.serialization.json.JsonArray).orEmpty() +
+                    me.rerere.rikkahub.utils.JsonInstant.parseToJsonElement("""{"type":"function","function":{"name":"context_unknown_tool","parameters":{"type":"object"}}}""")
+                unknownGate.confirm(kotlinx.serialization.json.JsonObject(raw + ("tools" to kotlinx.serialization.json.JsonArray(definitions))).toString())
+                withTimeout(10_000) { service.getGenerationJobStateFlow(conversation.id).first { it == null } }
+                val unknown = service.getConversation(conversation.id)!!.currentMessages.last().getTools().single()
+                assertEquals("context_unknown_tool", unknown.toolName)
+                assertTrue(unknown.isPending)
+                assertFalse(unknown.isExecuted)
+                assertEquals(4, server.bodies.size)
+                service.handleToolApproval(conversation.id, "unknown-call", approved = true)
+                withTimeout(10_000) { service.errors.first { errors -> errors.any { it.conversationId == conversation.id && it.error.message.orEmpty().contains("not currently authorized") } } }
+                withTimeout(10_000) { service.getGenerationJobStateFlow(conversation.id).first { it == null } }
+                assertEquals(4, server.bodies.size)
+                assertFalse(service.getConversation(conversation.id)!!.currentMessages.last().getTools().single().isExecuted)
             } finally {
                 service.deleteConversation(conversation.id)
                 fixtures.remove(conversation.id)

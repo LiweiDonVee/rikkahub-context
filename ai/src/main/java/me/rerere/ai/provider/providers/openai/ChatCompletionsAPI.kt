@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
 import kotlinx.serialization.json.JsonElement
@@ -27,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import me.rerere.ai.context.isUserAuthored
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
@@ -56,8 +56,7 @@ import me.rerere.ai.util.encodeBase64
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
 import me.rerere.ai.util.mergeCustomHeaders
-import me.rerere.ai.util.parseErrorDetail
-import me.rerere.ai.util.stringSafe
+import me.rerere.ai.util.providerFailure
 import me.rerere.common.http.await
 import me.rerere.common.http.jsonArrayOrNull
 import me.rerere.common.http.jsonObjectOrNull
@@ -204,26 +203,7 @@ class ChatCompletionsAPI(
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                var exception = t
-
-                t?.printStackTrace()
-                println("[onFailure] 发生错误: ${t?.javaClass?.name} ${t?.message} / $response")
-
-                val bodyRaw = response?.body?.stringSafe()
-                try {
-                    if (!bodyRaw.isNullOrBlank()) {
-                        val bodyElement = Json.parseToJsonElement(bodyRaw)
-                        println(bodyElement)
-                        exception = bodyElement.parseErrorDetail()
-                        Log.i(TAG, "onFailure: $exception")
-                    }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "onFailure: failed to parse from $bodyRaw")
-                    e.printStackTrace()
-                    exception = e
-                } finally {
-                    close(exception)
-                }
+                close(providerFailure(response, t))
             }
 
             override fun onClosed(eventSource: EventSource) {
@@ -505,9 +485,7 @@ class ChatCompletionsAPI(
                 is PartGroup.Content -> {
                     // 从当前 group 中提取 reasoning（保持顺序）
                     val reasoning = group.parts.filterIsInstance<UIMessagePart.Reasoning>().filter {
-                        includeReasoning ||
-                            it.metadata?.get(me.rerere.ai.context.USER_AUTHORED_REASONING)?.jsonPrimitive?.content ==
-                            "true"
+                        includeReasoning || it.isUserAuthored
                     }
                     reasoningParts += reasoning
                     group.parts
@@ -553,6 +531,25 @@ class ChatCompletionsAPI(
         }
     }
 
+    private fun visibleReasoningField(detail: JsonElement): String? = when (((detail as? JsonObject)?.get(
+        "type"
+    ) as? JsonPrimitive)?.content) {
+        "reasoning.text" -> "text"
+        "reasoning.summary" -> "summary"
+        else -> null
+    }
+
+    private fun UIMessagePart.Reasoning.requestReasoningDetails(): JsonArray? {
+        val details = metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails ?: return null
+        if (!isUserAuthored) return details
+        var replaced = false
+        return JsonArray(details.map { detail ->
+            val field = visibleReasoningField(detail) ?: return@map detail
+            val text = if (replaced) "" else reasoning.also { replaced = true }
+            JsonObject((detail as JsonObject) + (field to JsonPrimitive(text)))
+        })
+    }
+
     private fun buildAssistantMessageJson(
         contentParts: List<UIMessagePart>,
         tools: List<UIMessagePart.Tool>,
@@ -568,14 +565,16 @@ class ChatCompletionsAPI(
         }
         val reasoningDetails = if (includeOpenRouterReasoningDetails) {
             JsonArray(
-                reasoningParts.flatMap { it.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails.orEmpty() }
+                reasoningParts.flatMap { it.requestReasoningDetails().orEmpty() }
             )
         } else {
             null
         }
         val reasoningText = reasoningParts.filter {
             !includeOpenRouterReasoningDetails ||
-                it.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails.isNullOrEmpty()
+                it.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails.isNullOrEmpty() ||
+                (it.isUserAuthored &&
+                    it.requestReasoningDetails().orEmpty().none { detail -> visibleReasoningField(detail) != null })
         }.joinToString("\n\n") { it.reasoning }
         val hasReasoning = reasoningText.isNotBlank() || !reasoningDetails.isNullOrEmpty()
         if (!hasUsableContent && !hasReasoning && tools.isEmpty()) {

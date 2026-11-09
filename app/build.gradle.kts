@@ -24,8 +24,8 @@ android {
         applicationId = "me.rerere.rikkahub.context"
         minSdk = 26
         targetSdk = 37
-        versionCode = 196
-        versionName = "3.1.2-context.2"
+        versionCode = 197
+        versionName = "3.1.2-context.3"
         buildConfigField("String", "UPDATE_FEED_URL", "\"\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

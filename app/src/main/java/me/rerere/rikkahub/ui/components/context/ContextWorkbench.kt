@@ -330,7 +330,7 @@ private fun ContextTransfer(source: Conversation, currentId: Uuid, service: Chat
         ContextChoice("目标会话", targets.find { it.id == targetId }?.title ?: "选择会话", targets.map { it.id to it.title.ifEmpty { it.id.toString().take(8) } }) { targetId = it }
         ContextChoice("插入位置", after?.let { "消息 ${it.toString().take(8)} 之后" } ?: "开头", listOf(null to "开头") + target?.currentMessages.orEmpty().map { it.id to "${it.role}: ${it.toText().take(50)} 之后" }) { after = it }
         ContextChoice("复制方式", mapOf("original" to "原样复制", "text" to "转普通文本", "merged" to "合并为一条用户消息").getValue(mode), listOf("original" to "原样复制", "text" to "转普通文本", "merged" to "合并为一条用户消息")) { mode = it }
-        Text("原样保留角色和协议内容。不同 Provider 的签名或工具结构可能不兼容；不兼容时请显式转为文本，并用请求预览检查实际发送内容。", style = MaterialTheme.typography.bodySmall)
+        Text("原样复制保留角色、内容和 Provider metadata。复制后可继续编辑，并在请求预览中查看实际发送内容。", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { targetId?.let { onCopy(selected, it, after, mode) } }, enabled = enabled && targetId != null && selected.isNotEmpty()) { Text("复制到指定位置") }
     }
 }

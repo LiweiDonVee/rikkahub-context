@@ -19,12 +19,21 @@ class RequestControlTest {
         assertEquals(reviewed, params.prepareRequest("test", "https://example.test/v1", original))
     }
 
-    @Test fun `raw edits cannot change transport mode model or grant extra tools`() {
+    @Test fun `raw edits preserve stream decoding while model and tool definitions are editable`() {
         val original = """{"model":"same","stream":true,"tools":[{"type":"function","function":{"name":"read"}}]}"""
         validateRequestEdit(original, original.replace("read", "read"))
         assertThrows(IllegalArgumentException::class.java) { validateRequestEdit(original, original.replace("true", "false")) }
-        assertThrows(IllegalArgumentException::class.java) { validateRequestEdit(original, original.replace("same", "other")) }
-        assertThrows(IllegalArgumentException::class.java) { validateRequestEdit(original, original.replace("read", "delete")) }
+        validateRequestEdit(original, original.replace("same", "other"))
+        validateRequestEdit(original, original.replace("read", "delete"))
+    }
+
+
+    @Test fun `raw edits can rewrite signed and encrypted native content`() {
+        val original = """{"stream":true,"input":[{"type":"reasoning","encrypted_content":"old cipher","summary":[{"type":"summary_text","text":"old"}]}]}"""
+        val edited = original.replace("old cipher", "edited cipher").replace("\"old\"", "\"edited\"")
+        validateRequestEdit(original, edited)
+        validateRequestEdit("""{"messages":[{"signature":"original","thinking":"old"}]}""", """{"messages":[{"signature":"changed","thinking":"edited"}]}""")
+        assertThrows(IllegalStateException::class.java) { validateRequestEdit(original, "[]") }
     }
 
     @Test fun `snapshots redact credential fields and strip endpoint credentials`() {

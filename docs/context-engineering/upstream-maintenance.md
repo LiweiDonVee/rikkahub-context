@@ -19,7 +19,7 @@ git merge upstream/master
 - `ChatRequestFactory`：选择在原有条数/检查点后作用于副本，继续使用现有提示、记忆、工具与输入转换。
 - 五套 Provider：`prepareRequest` 保持在最终正文和自定义合并之后，确认字符串直接用于 HTTP。
 - `AgentLoop`：上下文请求使用新的输出槽，历史调用作为数据；人工工具继续由显式 Run/Continue 调度。
-- `UIMessage` / `ContextPartDraft`：新增部件和重排保留来源身份，恢复、排除与签名状态正确映射。
+- `UIMessage` / `ContextPartDraft`：新增部件和重排保留来源身份，恢复与排除正确映射，旧编辑标记读取为当前人工文本。
 - `ConversationSession`：所有加载中会话的写入仍经过 Session/ChatService。
 - 原生预填充：保持 `presetMessages → newConversation → updateCurrentMessages`、ID/时间和字面内容；只为本地文件建立独立会话所有权。
 - Room schema 33：请求/回复分块表、run 关联、迁移和级联删除。

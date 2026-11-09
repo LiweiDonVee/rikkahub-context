@@ -26,7 +26,7 @@ flowchart LR
 | 结构 | 职责 |
 |---|---|
 | `UIMessage.parts` | 有序的正文、Thinking、附件、工具调用与结果 |
-| `ContextMessageState` | 首份原件、排除项、来源、工具执行记录及签名失效状态 |
+| `ContextMessageState` | 首份原件、排除项、来源、工具执行记录及旧版本编辑标记 |
 | `ContextPartDraft` | 部件的原始索引和稳定 UI key，保证增删重排后状态映射正确 |
 | `ContextSelection` / `CompiledContext` | 本次消息、顺序及内容选择，以及可追踪的排除原因 |
 | `RequestControl` / `RequestReviewGate` | 最终正文的确认、取消和实际传输读回 |
@@ -40,7 +40,7 @@ Room schema 为 33，从上游 32 自动迁移。消息 JSON 采用默认扩展�
 
 `ConversationSession` 是加载中会话的唯一状态源。ChatService 通过 session 更新并 flush；编辑、恢复、插入、复制和版本选择使用这一条保存路径。
 
-`MessagePartsEditor` 服务普通历史编辑、工作台、插入消息和助手预填充。草稿一次保存，Text 以 copy 更新，原生 metadata 保留；显式转正文承担结构转换。
+`MessagePartsEditor` 服务普通历史编辑、工作台、插入消息和助手预填充。草稿一次保存，Text 以 copy 更新，原生 metadata 保留；显式转正文承担结构转换。思考文本修改由共享保存路径标记；旧版本编辑标记在请求投影中兼容读取，保留 metadata 并使用当前文本。
 
 ## 预填充兼容
 
@@ -52,7 +52,7 @@ Room schema 为 33，从上游 32 自动迁移。消息 JSON 采用默认扩展�
 
 `ChatRequestFactory` 在原有上下文条数与压缩检查点后编译请求副本，再经过系统提示、记忆、工具提示和输入转换。
 
-五个 Provider 边界在最终原生正文及自定义 JSON 合并后调用 `prepareRequest`。确认后的字符串直接作为 HTTP 正文，拦截器读回并校验。认证使用现有网络配置，HTTP 认证头不写入快照。
+五个 Provider 边界在最终原生正文及自定义 JSON 合并后调用 `prepareRequest`。确认后的字符串直接作为 HTTP 正文，拦截器读回并校验。签名、密文、模型和工具定义编辑按正文发送；HTTP 错误保留状态码和原始返回正文。认证使用现有网络配置，HTTP 认证头不写入快照。
 
 OCR 使用相同边界。需要远端 OCR 时先确认附件请求，随后展示聊天请求；取消关联到底层 Call。用户改写过的 OCR 请求不写入普通附件缓存。
 

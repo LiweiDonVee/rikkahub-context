@@ -160,7 +160,7 @@ class InteractionsApiTest {
                     ).toMetadata(),
                 ),
                 reasoning("I should check the weather.", GoogleInteractionsMetadata("thought-signature").toMetadata()),
-                // generateContent 协议的签名不能当作 Interactions 的 thought step 回传
+                // Foreign metadata is preserved locally; its visible thought is still sent without borrowing its signature.
                 reasoning("foreign thought", GoogleThoughtMetadata("generate-content-signature").toMetadata()),
                 UIMessagePart.Tool(
                     toolCallId = "fc_1",
@@ -183,6 +183,7 @@ class InteractionsApiTest {
                 "google_search_call",
                 "google_search_result",
                 "thought",
+                "thought",
                 "function_call",
                 "function_result",
                 "model_output",
@@ -200,12 +201,17 @@ class InteractionsApiTest {
             thought["summary"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content,
         )
 
-        val call = input[4]
+        assertEquals(
+            "foreign thought",
+            input[4]["summary"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content
+        )
+        assertFalse(input[4].containsKey("signature"))
+        val call = input[5]
         assertEquals("fc_1", call["id"]!!.jsonPrimitive.content)
         assertEquals("Mount Elbrus", call["arguments"]!!.jsonObject["location"]!!.jsonPrimitive.content)
         assertEquals("call-signature", call["signature"]!!.jsonPrimitive.content)
 
-        val result = input[5]
+        val result = input[6]
         assertEquals("fc_1", result["call_id"]!!.jsonPrimitive.content)
         assertEquals("get_weather", result["name"]!!.jsonPrimitive.content)
         assertEquals(
@@ -215,7 +221,7 @@ class InteractionsApiTest {
 
         assertEquals(
             "It is snowing.",
-            input[6]["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content,
+            input[7]["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content,
         )
     }
 
@@ -275,7 +281,10 @@ class InteractionsApiTest {
         assertEquals("The GCD is 21.", (message.parts[1] as UIMessagePart.Text).text)
         assertEquals(2, message.parts.size)
         assertEquals(listOf(UIMessageAnnotation.UrlCitation("Example", "https://example.com")), message.annotations)
-        assertEquals(TokenUsage(promptTokens = 11, completionTokens = 335, totalTokens = 346, cachedTokens = 2), message.usage)
+        assertEquals(
+            TokenUsage(promptTokens = 11, completionTokens = 335, totalTokens = 346, cachedTokens = 2),
+            message.usage
+        )
         assertEquals(StreamChunk.Finish("completed", "v1_abc", "gemini-3.8-flash"), chunks.last())
     }
 
@@ -444,7 +453,10 @@ class InteractionsApiTest {
         assertEquals("int_456", result.id)
         assertEquals("requires_action", result.finishReason)
         assertEquals(TokenUsage(promptTokens = 10, completionTokens = 8, totalTokens = 18), result.usage)
-        assertEquals(listOf(UIMessageAnnotation.UrlCitation("NFL.com", "https://www.nfl.com")), result.message.annotations)
+        assertEquals(
+            listOf(UIMessageAnnotation.UrlCitation("NFL.com", "https://www.nfl.com")),
+            result.message.annotations
+        )
 
         val parts = result.message.parts
         assertEquals(5, parts.size)

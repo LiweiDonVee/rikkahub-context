@@ -26,7 +26,7 @@ class ContextEngineeringTest {
         val decoded = json.decodeFromString<UIMessage>(json.encodeToString(edited))
         assertEquals(original.id, decoded.id)
         assertEquals(original.role, decoded.role)
-        assertEquals(updatedParts, decoded.parts)
+        assertEquals(updatedParts.map { if (it is UIMessagePart.Reasoning) it.withUserReasoning(it.reasoning) else it }, decoded.parts)
         assertEquals(original.parts, decoded.restoreContextOriginal().parts)
         assertEquals(0, executions)
     }
@@ -82,11 +82,14 @@ class ContextEngineeringTest {
         assertEquals("edited result", (compileContext(listOf(edited), ContextSelection()).messages.single().getTools().single().output.single() as UIMessagePart.Text).text)
     }
 
-    @Test fun `signed reasoning edits can be saved but require explicit exclusion before replay`() {
+    @Test fun `signed reasoning edits are sent with current text and original metadata`() {
         val signed = UIMessagePart.Reasoning("original", metadata = JsonObject(mapOf("signature" to JsonPrimitive("opaque"))))
         val message = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(signed, UIMessagePart.Text("answer")))
             .saveContextEdit(listOf(signed.copy(reasoning = "edited"), UIMessagePart.Text("answer")))
-        assertThrows(IllegalArgumentException::class.java) { compileContext(listOf(message), ContextSelection()) }
+        val sent = compileContext(listOf(message), ContextSelection()).messages.single().parts.first() as UIMessagePart.Reasoning
+        assertEquals("edited", sent.reasoning)
+        assertEquals("opaque", sent.metadata?.get("signature")?.toString()?.trim('"'))
+        assertTrue(sent.isUserAuthored)
         assertEquals(1, compileContext(listOf(message), ContextSelection(includeReasoning = false)).messages.single().parts.size)
     }
 
@@ -107,11 +110,11 @@ class ContextEngineeringTest {
         assertEquals(listOf(fresh), compileContext(listOf(message), ContextSelection()).messages.single().parts)
     }
 
-    @Test fun `editing a signed Google text part requires exclusion or explicit conversion`() {
+    @Test fun `editing a signed Google text part preserves its metadata and remains sendable`() {
         val signed = UIMessagePart.Text("original", metadata = JsonObject(mapOf("thoughtSignature" to JsonPrimitive("signature"))))
         val message = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(signed)).saveContextEdit(listOf(signed.copy(text = "edited")))
-        assertEquals(setOf(0), message.contextState.invalidOpaqueParts)
-        assertThrows(IllegalArgumentException::class.java) { compileContext(listOf(message), ContextSelection()) }
+        assertTrue(message.contextState.invalidOpaqueParts.isEmpty())
+        assertEquals(listOf(signed.copy(text = "edited")), compileContext(listOf(message), ContextSelection()).messages.single().parts)
         assertTrue(message.saveContextEdit(listOf(UIMessagePart.Text("explicit plain text"))).contextState.invalidOpaqueParts.isEmpty())
     }
 
@@ -130,6 +133,21 @@ class ContextEngineeringTest {
         val compiled = compileContext(history, ContextSelection(excludedMessages = setOf(two.id.toString()), messageOrder = listOf(three.id.toString(), one.id.toString(), two.id.toString())))
         assertEquals(listOf(three.id, one.id), compiled.messages.map { it.id })
         assertEquals(listOf(one, two, three), history)
+    }
+
+
+    @Test fun `old edited reasoning is sent even when only a legacy invalid marker exists`() {
+        val legacy = UIMessage(role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Reasoning("previously edited", metadata = JsonObject(mapOf("encrypted_content" to JsonPrimitive("cipher"))))),
+            contextState = ContextMessageState(invalidOpaqueParts = setOf(0)))
+        val stored = json.decodeFromString<UIMessage>(json.encodeToString(legacy))
+        val sent = compileContext(listOf(stored), ContextSelection()).messages.single().parts.single() as UIMessagePart.Reasoning
+        assertEquals("previously edited", sent.reasoning)
+        assertTrue(sent.isUserAuthored)
+        assertEquals(JsonPrimitive("cipher"), sent.metadata?.get("encrypted_content"))
+        val resaved = stored.saveContextDraft(stored.contextDraft())
+        assertTrue(resaved.contextState.invalidOpaqueParts.isEmpty())
+        assertTrue((resaved.parts.single() as UIMessagePart.Reasoning).isUserAuthored)
     }
 
     @Test fun `old history JSON defaults to no exclusions and no edit state`() {

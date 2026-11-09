@@ -12,6 +12,7 @@ import me.rerere.ai.agent.withRetry
 import me.rerere.ai.context.ContextSelection
 import me.rerere.ai.context.ContextExclusion
 import me.rerere.ai.context.compileContext
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.Model
@@ -174,6 +175,13 @@ class ChatRequestFactory(
                     it.transforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                         .visualTransforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                         .onGenerationFinish(outputTransformers, context, turn.model, turn.assistant, turn.settings)
+                        .map { output ->
+                            output.copy(parts = output.parts.map { part ->
+                                if (approveNewTools && part is UIMessagePart.Tool && !part.isExecuted) {
+                                    part.copy(approvalState = ToolApprovalState.Pending)
+                                } else part
+                            })
+                        }
                 }
 
             override suspend fun pendingParts() = takePendingParts()

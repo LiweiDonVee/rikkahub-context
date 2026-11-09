@@ -26,28 +26,11 @@ suspend fun TextGenerationParams.prepareRequest(protocol: String, endpoint: Stri
     return result
 }
 
-/** Message/parameter edits are free; transport/parser settings and tool authorization stay authoritative. */
+/** Send JSON edits unchanged; the response stream mode must match the selected decoder. */
 fun validateRequestEdit(original: String, edited: String) {
     val before = json.parseToJsonElement(original) as? JsonObject ?: error("Original request must be an object")
     val after = json.parseToJsonElement(edited) as? JsonObject ?: error("Request must be a JSON object")
-    for (key in listOf("model", "stream")) {
-        require(before[key] == after[key]) { "Change $key in conversation settings and rebuild the preview" }
-    }
-    val originalTools = (before["tools"] as? JsonArray).orEmpty()
-    val editedTools = (after["tools"] as? JsonArray).orEmpty()
-    require(editedTools.all { it in originalTools }) { "Request tools must be a subset of the authorized definitions" }
-    val opaque = opaqueBlocks(before)
-    require(opaqueBlocks(after).all { it in opaque }) {
-        "Signed/encrypted provider blocks cannot be rewritten. Exclude them or convert visible content to text."
-    }
-}
-
-private fun opaqueBlocks(value: JsonElement): List<JsonObject> = when (value) {
-    is JsonObject -> if (value.keys.any { it in setOf("signature", "thoughtSignature", "encrypted_content", "interactions_signature") }) {
-        listOf(value)
-    } else value.values.flatMap(::opaqueBlocks)
-    is JsonArray -> value.flatMap(::opaqueBlocks)
-    else -> emptyList()
+    require(!before.containsKey("stream") || before["stream"] == after["stream"]) { "Change stream mode in conversation settings and rebuild the preview" }
 }
 
 @Serializable

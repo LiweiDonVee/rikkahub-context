@@ -147,6 +147,7 @@ fun ChatInput(
     onStartVoiceMode: (() -> Unit)? = null,
     voiceState: VoiceSessionState = VoiceSessionState(),
     onStopVoiceMode: () -> Unit = {},
+    onPreviewClick: (() -> Unit)? = null,
 ) {
     val toaster = LocalToaster.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -360,6 +361,10 @@ fun ChatInput(
 
                         if (loading) {
                             KeepScreenOn()
+                        }
+
+                        if (onPreviewClick != null && !loading && !state.isEmpty() && !state.isEditing()) {
+                            androidx.compose.material3.TextButton(onClick = onPreviewClick) { Text("保存并预览") }
                         }
 
                         AnimatedVisibility(

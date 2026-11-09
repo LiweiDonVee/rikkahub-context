@@ -260,6 +260,7 @@ fun ChatMessageActionsSheet(
     model: Model?,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    onContext: (() -> Unit)? = null,
     onShare: () -> Unit,
     onFork: () -> Unit,
     onSelectAndCopy: () -> Unit,
@@ -276,6 +277,7 @@ fun ChatMessageActionsSheet(
         val hasTextContent = message.parts.filterIsInstance<UIMessagePart.Text>()
             .any { it.text.isNotBlank() }
         val actions = buildList {
+            if (onContext != null) add(MessageSheetAction(HugeIcons.WebDesign01, "上下文工作台 / Inspector", onClick = onContext))
             add(MessageSheetAction(HugeIcons.TextSelection, stringResource(R.string.select_and_copy), onClick = onSelectAndCopy))
             if (hasTextContent) {
                 add(MessageSheetAction(HugeIcons.WebDesign01, stringResource(R.string.render_with_webview), onClick = onWebViewPreview))

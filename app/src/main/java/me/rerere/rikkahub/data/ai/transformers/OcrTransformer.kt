@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.ai.transformers
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -10,6 +11,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderManager
+import me.rerere.ai.provider.RequestControl
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -25,6 +27,7 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.File
 import kotlin.time.Duration.Companion.days
+import kotlin.uuid.Uuid
 
 private const val TAG = "OcrTransformer"
 
@@ -68,7 +71,7 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
                         parts = message.parts.map { part ->
                             when {
                                 part is UIMessagePart.Image && part.url.startsWith("file:") -> {
-                                    UIMessagePart.Text(performOcr(part))
+                                    UIMessagePart.Text(performOcr(part, ctx.ocrRequestControl, message.id))
                                 }
 
                                 else -> part
@@ -82,7 +85,7 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
         }
     }
 
-    suspend fun performOcr(part: UIMessagePart.Image): String = runCatching {
+    suspend fun performOcr(part: UIMessagePart.Image, requestControl: ((Model, List<UIMessage>) -> RequestControl)? = null, sourceMessageId: Uuid? = null): String = runCatching {
         // Check cache first
         cache.get(part.url)?.let { cachedResult ->
             Log.i(TAG, "performOcr: Using cached result for ${part.url}")
@@ -96,19 +99,31 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
             get<ProviderManager>().getProviderByType(providerSetting),
             UsageTag(UsageSource.OCR),
         )
-        val result = provider.generateText(
-            providerSetting = providerSetting,
-            messages = listOf(
-                UIMessage.system(settings.ocrPrompt),
+        val requestMessages = listOf(
+                UIMessage.system(settings.ocrPrompt).copy(isSynthetic = true),
                 UIMessage(
+                    id = sourceMessageId ?: Uuid.random(),
                     role = MessageRole.USER,
                     parts = listOf(UIMessagePart.Image(part.url))
                 )
-            ),
+            )
+        var requestWasEdited = false
+        val observer = requestControl?.invoke(model, requestMessages)
+        val recording = observer?.let { delegate -> object : RequestControl by delegate {
+            override suspend fun prepare(protocol: String, endpoint: String, serializedBody: String): String {
+                val finalBody = delegate.prepare(protocol, endpoint, serializedBody)
+                if (finalBody != serializedBody) requestWasEdited = true
+                return finalBody
+            }
+        } }
+        val result = provider.generateText(
+            providerSetting = providerSetting,
+            messages = requestMessages,
             params = TextGenerationParams(
                 model = model,
                 customHeaders = model.customHeaders,
                 customBody = model.customBodies,
+                requestControl = recording,
             ),
         )
         val content = result.message.toText().ifBlank { "[ERROR, OCR failed]" }
@@ -121,9 +136,10 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
         """.trimIndent()
 
         // Cache the result
-        cache.put(part.url, ocrResult)
+        if (!requestWasEdited) cache.put(part.url, ocrResult)
         return ocrResult
     }.getOrElse {
+        if (it is CancellationException) throw it
         "[ERROR, OCR failed: $it]"
     }
 }

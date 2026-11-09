@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.ai.transformers
 import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.ai.provider.Model
+import me.rerere.ai.provider.RequestControl
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
@@ -14,6 +15,7 @@ class TransformerContext(
     val settings: Settings,
     val processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     val workspaceCwd: String? = null,
+    val ocrRequestControl: ((Model, List<UIMessage>) -> RequestControl)? = null,
 )
 
 interface MessageTransformer {
@@ -66,6 +68,7 @@ suspend fun List<UIMessage>.transforms(
     settings: Settings,
     processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     workspaceCwd: String? = null,
+    ocrRequestControl: ((Model, List<UIMessage>) -> RequestControl)? = null,
 ): List<UIMessage> {
     val ctx = TransformerContext(
         context = context,
@@ -74,6 +77,7 @@ suspend fun List<UIMessage>.transforms(
         settings = settings,
         processingStatus = processingStatus,
         workspaceCwd = workspaceCwd,
+        ocrRequestControl = ocrRequestControl,
     )
     return transformers.fold(this) { acc, transformer ->
         transformer.transform(ctx, acc)

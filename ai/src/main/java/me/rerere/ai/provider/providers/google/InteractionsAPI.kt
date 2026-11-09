@@ -31,6 +31,7 @@ import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.TextGenerationResult
+import me.rerere.ai.provider.prepareRequest
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.groupPartsByToolBoundary
 import me.rerere.ai.provider.stream.SseEvent
@@ -168,17 +169,19 @@ internal class InteractionsAPI(
         // trySend 在缓冲满时会静默丢弃 delta，导致回复中间缺字 (#1295)，因此缓冲必须无界
     }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
 
-    private fun buildRequest(
+    private suspend fun buildRequest(
         providerSetting: ProviderSetting.Google,
         params: TextGenerationParams,
         requestBody: JsonObject,
     ): Request {
         val url = "${providerSetting.baseUrl}/interactions"
+        val serializedBody = params.prepareRequest("google_interactions", url, requestBody)
         return Request.Builder()
             .url(url)
             .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .configureSessionHeaders(url, params.sessionId)
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .post(serializedBody.toRequestBody("application/json".toMediaType()))
+            .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
             .addHeader("x-goog-api-key", keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString()))
             .configureReferHeaders(providerSetting.baseUrl)
             .build()

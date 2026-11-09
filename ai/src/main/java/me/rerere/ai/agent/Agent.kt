@@ -8,6 +8,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import kotlin.uuid.Uuid
 
 /**
  * 一次 agent 运行的输入。
@@ -24,6 +25,9 @@ data class AgentRequest(
     /** 最多请求模型的次数 */
     val maxSteps: Int = 256,
     val retry: RetryPolicy = RetryPolicy.NONE,
+    /** False for a context experiment: saved assistant content is history, never an execution queue. */
+    val resumeLastMessage: Boolean = true,
+    val responseMessageId: Uuid = Uuid.random(),
 )
 
 /** 调用方在循环各个节点上的介入点 */

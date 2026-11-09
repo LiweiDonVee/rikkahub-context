@@ -89,6 +89,31 @@ class AgentLoopTest {
     }
 
     @Test
+    fun `context request never executes tools inherited from history`() = runTest {
+        var executions = 0
+        val read = tool("read") {
+            executions++
+            listOf(UIMessagePart.Text("old execution"))
+        }
+        val historical =
+            UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Tool("historical", "read", "{}")))
+        provider.stream {
+            text("fresh")
+            finish()
+        }
+        val result = runToEnd(
+            request(
+                messages = listOf(UIMessage.user("hi"), historical),
+                tools = listOf(read)
+            ).copy(resumeLastMessage = false)
+        ).finished()
+        assertEquals(0, executions)
+        assertEquals("fresh", result.message.toText())
+        assertFalse(result.message.id == historical.id)
+        assertEquals(historical, hooks.prepared.single().last())
+    }
+
+    @Test
     fun `tool results go back to the model inside the same assistant message`() = runTest {
         val received = mutableListOf<JsonElement>()
         val search = tool("search") { args ->

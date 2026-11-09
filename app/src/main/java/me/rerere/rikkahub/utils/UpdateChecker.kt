@@ -21,8 +21,6 @@ import me.rerere.rikkahub.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-private const val API_URL = "https://updates.rikka-ai.com/"
-
 class UpdateChecker(
     private val client: OkHttpClient,
     appScope: AppScope,
@@ -36,13 +34,17 @@ class UpdateChecker(
     )
 
     private fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow {
+        if (BuildConfig.UPDATE_FEED_URL.isBlank()) {
+            emit(UiState.Success(UpdateInfo(BuildConfig.VERSION_NAME, "", "", emptyList())))
+            return@flow
+        }
         emit(UiState.Loading)
         emit(
             UiState.Success(
                 data = try {
                     val response = client.newCall(
                         Request.Builder()
-                            .url(API_URL)
+                            .url(BuildConfig.UPDATE_FEED_URL)
                             .get()
                             .addHeader(
                                 "User-Agent",

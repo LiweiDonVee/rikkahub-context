@@ -1,99 +1,84 @@
 <div align="center">
-  <img src="docs/icon.png" alt="App 图标" width="100" />
-  <h1>RikkaHub</h1>
-
-一个原生Android LLM 聊天客户端，支持切换不同的供应商进行聊天 🤖💬
-
-[English](README.md) | [繁體中文](README_ZH_TW.md) | 简体中文
-
-点击链接加入群聊 👉 [【RikkaHub】](https://qm.qq.com/q/I8MSU0FkOu)
-
+  <img src="docs/icon.png" alt="RikkaHub Context Engineering" width="88" />
+  <h1>RikkaHub Context Engineering</h1>
+  <p><strong>上下文完全由你掌控，下一步由你决定。</strong></p>
+  <p>原生 Android 上下文工程工作台</p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.2">下载 APK</a> · <a href="docs/context-engineering/user-guide.zh-CN.md">使用指南</a> · <a href="README_EN.md">English</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
-<div align="center">
-  <img src="docs/img/poster.png" alt="RikkaHub" width="800" />
-</div>
+基于 [RikkaHub](https://github.com/rikkahub/rikkahub) 的独立 Fork，让你自主组织模型看到的内容，并直接干预交互过程。
 
+消息、Thinking、工具调用、工具结果和助手预填充都可以编辑。你可以跨会话组合信息，选择本次携带的历史、Skills 和工具记录，检查并修改真实请求正文，再决定发送、运行工具或从某个位置继续。
 
-## 🚀 下载
+**编辑、选择、执行和继续，各自独立，由你调度。** 直接修改是默认路径，回复版本和会话分支随时可用。
 
-🔗 [前往官网下载](https://rikka-ai.com/download)（推荐）
+## 你可以怎样使用
 
-🔗 [前往 Google Play 下载](https://play.google.com/store/apps/details?id=me.rerere.rikkahub)
+| 想做什么 | 在客户端里完成 |
+|---|---|
+| 给已有回复补充思考 | 添加第一段 Thinking，修改全文，调整部件顺序，再选择是否携带 |
+| 设计助手的初始上下文 | 在原有「预设聊天消息」中组合用户消息、助手正文和 Thinking |
+| 精确选择下一次请求 | 选择消息和顺序，控制历史 Thinking、Skills、工具调用与结果 |
+| 改写工具交互 | 编辑名称、参数和结果；单独重跑一个工具，或从保存的结果继续 |
+| 自由组合不同会话 | 非连续选择消息，指定目标与位置，原样复制、转文字或合并 |
+| 比较上下文实验 | 查看实际请求、JSON 路径差异，以及每轮归档回复 |
 
-> [!WARNING]
-> RikkaHub 存在许多 fork 版本，fork 版本出现问题与 RikkaHub 无关，请谨慎使用 fork 版本，避免隐私泄露或者过度索要权限问题。
+## 原生界面，直接编辑
 
-## 💖 赞助商
+历史消息、插入消息和助手预填充共用完整内容编辑器。添加、删除、排序、撤销和全文编辑在同一处完成，修改正文会保留其他部件。
 
-| 赞助商 | 介绍 |
-|:---:|:---|
-| <img src="docs/sponsors/sta1n.png" alt="STA1N API" width="50" /><br /><b><a href="https://sta1n.ai">STA1N API🍪</a></b> | 感谢<a href="https://sta1n.ai">STA1N API</a>对本项目的赞助！主营 RP 的站。 |
-| <img src="docs/sponsors/api-mart.png" alt="APIMart" width="50" /><br /><b><a href="https://go.apimart.ai/gh-rikkahub">APIMart</a></b> | 感谢 APIMart 赞助了本项目！APIMart 是专注 AI 图片/视频生成的低价 API 平台，GPT-Image-2 低至 $0.006/张，1 美元可出图 160+ 张。图片、视频一套异步 API 通吃，提交任务拿 ID、回调取结果，跑批万张不超时、换模型不改代码。按量付费、无月费，通过<a href="https://go.apimart.ai/gh-rikkahub">此注册链接</a>注册即可开用。 |
-| <img src="docs/sponsors/suixiang.jpg" alt="随想AI中转" width="50" /><br /><b><a href="https://sui-xiang.com">随想AI中转</a></b> | 感谢<a href="https://sui-xiang.com">随想AI中转</a>对本项目的赞助！随想AI中转 是一家可靠高效的 API 中继服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，隐私，透明，极速售后。新账户注册每日签到就送 0.5 元测试额度，充值额度 1:1，无需订阅，按量付费。多线路冗余、跨区域容灾、自动故障切换，长链路 SSE 不中断。99.9% 可用性，关键调用从不掉队。 |
-| <img src="docs/sponsors/ztest.png" alt="真测 ztest.ai" width="50" /><br /><b><a href="https://ztest.ai">真测 ztest.ai</a></b> | 感谢<a href="https://ztest.ai">真测 ztest.ai</a>对本项目的赞助！真测 ztest.ai 是一个 AI 中转站模型检测平台，检测结果数据全公开，23 项探针覆盖协议、身份、能力、内容完整性、安全性、性能六大维度，交叉印证识别伪造与降级。作为独立第三方验证平台，实时监测 AI 中转站的模型真实性、响应质量与服务可用性。 |
-| <img src="docs/sponsors/maru.png" alt="MaruCode" width="50" /><br /><b><a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">MaruCode</a></b> | <b><a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">MaruCode</a></b> 是一家偶尔做做慈善的小破站 API，自营号池，主要提供 Codex、Claude Code、GPT Image 等主流模型，支持 Websocket 协议，明码标价(Codex 0.25x, CC 1.5x)，透明汇率(1:1)，<a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">新用户注册送 2 刀</a>。<a href="https://images-2.muteki.site">生图工作台🖼️</a> |
-| <img src="docs/sponsors/naapi.png" alt="钠API" width="50" /><br /><b><a href="https://naapi.cc/register?aff=rikkahub">钠API</a></b> | 感谢<a href="https://naapi.cc/register?aff=rikkahub">钠API</a>对本项目的赞助！钠API（naapi.cc）是 OpenAI 兼容的 LLM 网关，以优惠价格提供 OpenAI、Anthropic、Google 等 300+ 模型访问。一个 base URL 加一个 key 即可接入；多线路冗余、自动故障切换，长链路 SSE 不中断；按量付费、充值额度 1:1，无订阅、无隐藏加价。 |
+<table>
+  <tr><th>完整内容编辑</th><th>本次请求</th><th>助手预填充</th></tr>
+  <tr>
+    <td><img src="docs/images/message-editor.png" width="250" alt="正文和新增 Thinking 的完整编辑器" /></td>
+    <td><img src="docs/images/request-controls.png" width="250" alt="选择本次携带的历史和分支" /></td>
+    <td><img src="docs/images/presets.png" width="250" alt="保留正文和 Thinking 的助手预填充" /></td>
+  </tr>
+</table>
 
-## ✨ 功能特色
+## 从编辑到模型请求
 
-- 🎨 现代化安卓APP设计（Material 3 Expressive / 预测性返回）和 🌙 暗色模式
-- 📦 工作区：基于 proot 的 Linux 智能体环境
-- 🎬 媒体生成（图片、视频）
-- 🖥️ Web多端访问支持
-- 🛠️ MCP 与 Skills 支持
-- 🔄 多种类型的供应商支持，自定义 API / URL / 模型（目前支持 OpenAI、Google、Anthropic）
-- 🖼️ 多模态输入支持
-- 📝 Markdown 渲染（支持代码高亮、数学公式、表格、Mermaid）
-- 🔍 搜索功能（Exa、Tavily、Zhipu、LinkUp、Brave、Perplexity、..）
-- 🧩 Prompt 变量（模型名称、时间等）
-- 🤳 二维码导出和导入提供商
-- 🤖 智能体自定义
-- 🧠 基于文件的记忆
-- 📝 AI翻译
-- 🌐 自定义HTTP请求头和请求体
+1. 打开消息「更多 → 上下文工作台 / Inspector」，或直接选择「编辑」。
+2. 添加和改写内容，保存历史。
+3. 在「本次请求」选择消息、顺序及携带内容，点击「预览重新生成」或「预览继续」。
+4. 检查实际 Provider 序列化正文，按需修改消息、系统指令和参数，确认发送。
+5. 在「请求记录」查看来源、排除项、正文及归档回复，比较下一次实验。
 
-## ✨ 开发
+输入框的「保存并预览」也能直接进入这条流程。工具的「重新执行工具」和「从结果继续」分别控制执行与生成。
 
-> [!IMPORTANT]
-> 本项目不接受 Pull Request（PR）。
+## 安装
 
-本项目使用[Android Studio](https://developer.android.com/studio)开发。
+当前版本：**3.1.2-context.2**。支持 Android 8.0 / API 26 及以上。
 
-技术栈文档:
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-arm64-v8a-debug.apk)：普通 ARM64 手机。
+- [通用 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/RikkaHub-Context-3.1.2-context.2-universal-debug.apk)：包含 ARM64 和 x86_64。
+- [版本与更新记录](https://github.com/LiweiDonVee/rikkahub-context/releases) · [校验文件](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.2/SHA256SUMS.txt)
 
-- [Kotlin](https://kotlinlang.org/) (开发语言)
-- [Koin](https://insert-koin.io/) (依赖注入)
-- [Jetpack Compose](https://developer.android.com/jetpack/compose) (UI 框架)
-- [DataStore](https://developer.android.com/topic/libraries/architecture/datastore?hl=zh-cn#preferences-datastore) (
-  偏好数据存储)
-- [Room](https://developer.android.com/training/data-storage/room) (数据库)
-- [Coil](https://coil-kt.github.io/coil/) (图片加载)
-- [Material 3 Expressive](https://m3.material.io/) (UI 设计)
-- [Navigation 3](https://developer.android.com/guide/navigation/navigation-3) (导航)
-- [Okhttp](https://square.github.io/okhttp/) (HTTP 客户端)
-- [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) (Json序列化)
+本次分发使用 Debug 签名。应用包名为 `me.rerere.rikkahub.context.debug`，可与官方 RikkaHub 并存。安装后在原有设置中配置自己的 Provider、端点和模型；模型、API 和上下文组织方式由你选择。
 
-> [!TIP]
-> 你需要在 `app` 文件夹下添加 `google-services.json` 文件才能构建应用。
+## 保留 RikkaHub 的完整底座
 
-## 💰 捐赠
+保留原生 Material 3 Expressive 界面、多 Provider、MCP、Skills、工作区、多模态、Markdown、搜索、记忆和角色卡导入，并扩展原有消息、预填充和会话分支机制。
 
-* [Ko-fi](https://ko-fi.com/reovodev)
-* [爱发电](https://afdian.com/a/reovo)
+Thinking 是客户端可访问或由你编写的思考文本。不同协议使用自己的字段；预览会显示实际表示，并说明确定省略的内容。签名对象可保留、排除或显式转为正文，详见 [Provider 说明](docs/context-engineering/provider-compatibility.md)。
 
-## ⭐ Star History
+## 文档与开发
 
-如果喜欢这个项目，请给个Star ⭐
+- [使用指南](docs/context-engineering/user-guide.zh-CN.md)：七条完整操作流程与原生预填充。
+- [构建指南](docs/context-engineering/build.md)：环境、构建、测试和签名。
+- [架构](docs/context-engineering/architecture.md)：历史、上下文编译、真实请求和回复归档。
+- [验证记录](docs/context-engineering/testing.md)：**833 项 JVM 测试、16 项 Android 集成/UI 测试通过**。
+- [上游同步](docs/context-engineering/upstream-maintenance.md) · [更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
-<a href="https://www.star-history.com/?type=date&repos=re-ovo%2Frikkahub">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&theme=dark&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
- </picture>
-</a>
+```sh
+git clone https://github.com/LiweiDonVee/rikkahub-context.git
+cd rikkahub-context
+pnpm --dir web-ui install --frozen-lockfile
+./gradlew assembleGithubDebug
+```
 
-## 📄 许可证
+## 上游与许可证
 
-本项目基于 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0) 开源。
+本项目基于 [rikkahub/rikkahub](https://github.com/rikkahub/rikkahub)，从 `9bc0fd65` 接入 Fork 改造。感谢原作者及所有贡献者提供原生客户端、Provider 适配与工具生态。
+
+沿用 [GNU AGPL-3.0](LICENSE)，保留上游和第三方归属。这个 Fork 的反馈与改进请提交到 [本仓库 Issues](https://github.com/LiweiDonVee/rikkahub-context/issues) 或 Pull Requests。

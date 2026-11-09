@@ -26,7 +26,7 @@ Material 3 look (cards with dividers, plain forms).
 ./gradlew bundlePlayRelease      # 构建上架 Google Play 的 AAB
 ./gradlew test                   # 运行所有模块的 JVM 单元测试
 ./gradlew lint                   # 运行 Android Lint
-./gradlew spotlessApply          # 用 ktlint 格式化相对 origin/master 改动过的 Kotlin 文件
+./gradlew spotlessApply          # 用 ktlint 格式化相对固定上游基线改动过的 Kotlin 文件
 ./gradlew spotlessCheck          # 只检查格式不改文件
 ```
 

@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.repository
 
 import android.database.sqlite.SQLiteBlobTooBigException
+import androidx.core.net.toUri
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
@@ -42,7 +43,8 @@ class ConversationRepository(
     }
 
     suspend fun hasFileReference(fileUrl: String): Boolean =
-        messageNodeDAO.hasFileReference(JsonInstant.encodeToString(fileUrl))
+        messageNodeDAO.hasFileReference(JsonInstant.encodeToString(fileUrl)) ||
+            database.contextRequestDao().hasResponseFileReference(JsonInstant.encodeToString(fileUrl))
 
     suspend fun getRecentConversations(assistantId: Uuid, limit: Int = 10): List<Conversation> {
         return conversationDAO.getRecentConversationsOfAssistant(
@@ -345,6 +347,8 @@ class ConversationRepository(
             conversation
         }
         val conversationId = conversation.id.toString()
+        val archivedFiles = database.contextRequestDao().responseFileLists(conversationId)
+            .flatMap { JsonInstant.decodeFromString<List<String>>(it) }.map { it.toUri() }
         messageFtsManager.deleteConversation(conversationId)
         database.withTransaction {
             // 收藏表和会话没有外键，要单独删
@@ -354,7 +358,7 @@ class ConversationRepository(
                 conversationToConversationEntity(conversation)
             )
         }
-        filesManager.deleteChatFiles(fullConversation.files)
+        filesManager.deleteChatFiles((fullConversation.files + archivedFiles).distinct())
     }
 
     /** 删除这些节点的收藏，节点从会话里移除后调用 */

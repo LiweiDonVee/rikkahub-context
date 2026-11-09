@@ -40,16 +40,17 @@ class ConversationMessagesTest {
     }
 
     @Test
-    fun `editing a message adds a branch that keeps its model`() {
+    fun `editing a message preserves identity and model with recoverable original`() {
         val modelId = Uuid.random()
         val reply = UIMessage.assistant("old").copy(modelId = modelId)
         val conversation = conversationOf(reply.toMessageNode())
 
         val node = conversation.editMessage(reply.id, listOf(UIMessagePart.Text("new"))).messageNodes.single()
 
-        assertEquals(2, node.messages.size)
-        assertEquals(1, node.selectIndex)
-        assertNotEquals(reply.id, node.currentMessage.id)
+        assertEquals(1, node.messages.size)
+        assertEquals(0, node.selectIndex)
+        assertEquals(reply.id, node.currentMessage.id)
+        assertEquals(reply.parts, node.currentMessage.contextState.originalParts)
         assertEquals("new", node.currentMessage.toText())
         assertEquals(MessageRole.ASSISTANT, node.currentMessage.role)
         assertEquals(modelId, node.currentMessage.modelId)
@@ -126,7 +127,8 @@ class ConversationMessagesTest {
 
     @Test
     fun `nothing to cancel returns null`() {
-        val conversation = conversationOf(UIMessage.user("hi").toMessageNode(), UIMessage.assistant("done").toMessageNode())
+        val conversation =
+            conversationOf(UIMessage.user("hi").toMessageNode(), UIMessage.assistant("done").toMessageNode())
 
         assertNull(conversation.cancelInterruptedTools())
         assertNull(Conversation.ofId(Uuid.random()).cancelInterruptedTools())

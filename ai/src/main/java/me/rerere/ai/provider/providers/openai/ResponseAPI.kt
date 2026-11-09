@@ -36,6 +36,7 @@ import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.TextGenerationResult
+import me.rerere.ai.provider.prepareRequest
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.groupPartsByToolBoundary
 import me.rerere.ai.provider.stream.SseEvent
@@ -125,14 +126,16 @@ class ResponseAPI(
             params = params,
             stream = false,
         )
+        val serializedBody = params.prepareRequest("openai_responses", endpoint.url, requestBody)
         val request = Request.Builder()
             .url(endpoint.url)
             .apply { endpoint.configureRequest(this) }
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .post(serializedBody.toRequestBody("application/json".toMediaType()))
+            .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
             .addHeader("Content-Type", "application/json")
             .build()
 
-        Log.i(TAG, "generateText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "generateText: request prepared")
 
         // await() waits for the response headers; reading the body can still block.
         client.newCall(request).await().use { response ->
@@ -158,13 +161,15 @@ class ResponseAPI(
             params = params,
             stream = true,
         )
+        val serializedBody = params.prepareRequest("openai_responses", endpoint.url, requestBody)
         val request = Request.Builder()
             .url(endpoint.url)
             .apply { endpoint.configureRequest(this) }
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
+            .post(serializedBody.toRequestBody("application/json".toMediaType()))
+            .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
             .build()
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText: request prepared")
 
         val decoder = ResponseApiStreamDecoder()
 

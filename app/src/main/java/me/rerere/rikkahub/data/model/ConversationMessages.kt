@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.model
 
+import me.rerere.ai.context.saveContextEdit
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -30,18 +31,7 @@ internal fun Conversation.deleteMessage(messageId: Uuid): Conversation? {
 internal fun Conversation.editMessage(messageId: Uuid, parts: List<UIMessagePart>): Conversation {
     val node = getMessageNodeByMessageId(messageId) ?: return this
     val original = node.messages.first { it.id == messageId }
-    val edited = if (original.isContextCheckpoint) {
-        // 摘要原地改写：新建分支会丢掉检查点标记，删除摘要时还会露出旧版本。
-        original.copy(parts = parts)
-    } else {
-        UIMessage(
-            role = node.role,
-            parts = parts,
-            // 编辑的是原消息的内容，来源仍是生成它的模型
-            modelId = original.modelId,
-            modelSnapshot = original.modelSnapshot,
-        )
-    }
+    val edited = original.saveContextEdit(parts)
     return upsertMessage(node.id, edited)
 }
 

@@ -123,6 +123,7 @@ fun ChatMessage(
     onClearTranslation: (UIMessage) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    onContext: (() -> Unit)? = null,
 ) {
     val message = node.messages[node.selectIndex]
     if (message.isContextCheckpoint) {
@@ -188,6 +189,9 @@ fun ChatMessage(
             LocalTextStyle provides textStyle,
             LocalWorkspaceId provides assistant?.workspaceId?.toString(),
         ) {
+            if (message.contextState.manualToolExecution) {
+                Text("上下文实验：工具审批仅执行所选工具，完成后可从结果继续。", style = MaterialTheme.typography.labelSmall)
+            }
             MessagePartsBlock(
                 assistant = assistant,
                 role = message.role,
@@ -253,6 +257,7 @@ fun ChatMessage(
         ChatMessageActionsSheet(
             message = message,
             onEdit = onEdit,
+            onContext = onContext,
             onDelete = onDelete,
             onShare = onShare,
             onFork = onFork,

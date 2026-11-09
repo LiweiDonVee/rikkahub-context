@@ -135,7 +135,8 @@ fun AssistantPromptPage(id: String) {
             innerPadding = innerPadding,
             assistant = assistant,
             settings = settings,
-            onUpdate = { vm.update(it) }
+            onUpdate = { vm.update(it) },
+            onSavePresetMessages = vm::savePresetMessages,
         )
     }
 }
@@ -145,7 +146,8 @@ private fun AssistantPromptContent(
     innerPadding: PaddingValues,
     assistant: Assistant,
     settings: Settings,
-    onUpdate: (Assistant) -> Unit
+    onUpdate: (Assistant) -> Unit,
+    onSavePresetMessages: suspend (List<UIMessage>, List<UIMessage>) -> Unit,
 ) {
     val context = LocalContext.current
     val templateTransformer = koinInject<TemplateTransformer>()
@@ -358,92 +360,7 @@ private fun AssistantPromptContent(
             }
         }
 
-        SectionHeader(
-            title = stringResource(R.string.assistant_page_preset_messages),
-            description = stringResource(R.string.assistant_page_preset_messages_desc),
-            action = {
-                SectionAddButton(
-                    onClick = {
-                        val lastRole = assistant.presetMessages.lastOrNull()?.role ?: MessageRole.ASSISTANT
-                        val nextRole = when (lastRole) {
-                            MessageRole.USER -> MessageRole.ASSISTANT
-                            MessageRole.ASSISTANT -> MessageRole.USER
-                            else -> MessageRole.USER
-                        }
-                        onUpdate(
-                            assistant.copy(
-                                presetMessages = assistant.presetMessages + UIMessage(
-                                    role = nextRole,
-                                    parts = listOf(UIMessagePart.Text(""))
-                                )
-                            )
-                        )
-                    }
-                )
-            },
-        )
-        CardGroup {
-            assistant.presetMessages.fastForEachIndexed { index, presetMessage ->
-                formItem {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Select(
-                            options = listOf(MessageRole.USER, MessageRole.ASSISTANT),
-                            selectedOption = presetMessage.role,
-                            onOptionSelected = { role ->
-                                onUpdate(
-                                    assistant.copy(
-                                        presetMessages = assistant.presetMessages.mapIndexed { i, msg ->
-                                            if (i == index) {
-                                                msg.copy(role = role)
-                                            } else {
-                                                msg
-                                            }
-                                        }
-                                    )
-                                )
-                            },
-                            modifier = Modifier.width(180.dp)
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        IconButton(
-                            onClick = {
-                                onUpdate(
-                                    assistant.copy(
-                                        presetMessages = assistant.presetMessages.filterIndexed { i, _ ->
-                                            i != index
-                                        }
-                                    )
-                                )
-                            }
-                        ) {
-                            Icon(HugeIcons.Cancel01, stringResource(R.string.delete))
-                        }
-                    }
-                    OutlinedTextField(
-                        value = presetMessage.toText(),
-                        onValueChange = { text ->
-                            onUpdate(
-                                assistant.copy(
-                                    presetMessages = assistant.presetMessages.mapIndexed { i, msg ->
-                                        if (i == index) {
-                                            msg.copy(parts = listOf(UIMessagePart.Text(text)))
-                                        } else {
-                                            msg
-                                        }
-                                    }
-                                )
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 6
-                    )
-                }
-            }
-        }
+        AssistantPresetMessages(assistant, settings, onUpdate, onSavePresetMessages)
 
         SectionHeader(
             title = stringResource(R.string.assistant_page_regex_title),

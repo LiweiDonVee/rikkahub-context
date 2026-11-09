@@ -37,7 +37,7 @@ internal class AgentLoop(
 
     init {
         val last = request.messages.lastOrNull()
-        if (last?.role == MessageRole.ASSISTANT) {
+        if (request.resumeLastMessage && last?.role == MessageRole.ASSISTANT) {
             history = request.messages.dropLast(1)
             message = last
         } else {
@@ -88,6 +88,7 @@ internal class AgentLoop(
         val params = step.params.copy(tools = request.tools)
         // 只带着追加内容创建的消息还没有模型 id
         val base = current?.let { it.copy(modelId = it.modelId ?: params.model.id) } ?: UIMessage(
+            id = request.responseMessageId,
             role = MessageRole.ASSISTANT,
             parts = emptyList(),
             modelId = params.model.id,
@@ -106,7 +107,8 @@ internal class AgentLoop(
         if (current != null && !current.parts.lastOrNull().isModelsTurn()) return
         val parts = hooks.pendingParts()
         if (parts.isEmpty()) return
-        val base = current ?: UIMessage(role = MessageRole.ASSISTANT, parts = emptyList())
+        val base =
+            current ?: UIMessage(id = request.responseMessageId, role = MessageRole.ASSISTANT, parts = emptyList())
         update(base.copy(parts = base.parts + parts))
     }
 

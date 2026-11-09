@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import android.net.Uri
+import me.rerere.ai.ui.UIMessage
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
@@ -303,6 +304,24 @@ private fun ChatPageContent(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+    val contextService: me.rerere.rikkahub.service.ChatService = koinInject()
+    var editingContextMessage by remember { mutableStateOf<UIMessage?>(null) }
+    editingContextMessage?.let { original ->
+        me.rerere.rikkahub.ui.components.context.MessagePartsEditor(
+            message = original,
+            onDismiss = { editingContextMessage = null },
+            loadTools = { contextService.authorizedContextTools(conversation.id) },
+            onSave = { edited, indices -> contextService.saveContextMessage(conversation.id, original.id, edited.parts, indices, original) },
+        )
+    }
+    var contextPreview by remember { mutableStateOf<me.rerere.rikkahub.data.ai.RequestReviewGate?>(null) }
+    contextPreview?.let { gate ->
+        me.rerere.rikkahub.ui.components.context.RequestPreviewDialog(
+            gate = gate,
+            onDismiss = { gate.cancel(); contextPreview = null },
+            onSend = { contextPreview = null },
+        )
+    }
     val workspaceRepository: WorkspaceRepository = koinInject()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
@@ -394,6 +413,17 @@ private fun ChatPageContent(
                     )
                 }
                 ChatInput(
+                    onPreviewClick = {
+                        if (currentChatModel != null) scope.launch {
+                            try {
+                                contextPreview = vm.saveMessageForPreview(inputState.getContents())
+                                inputState.clearInput()
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                toaster.show(e.message ?: "无法构建预览", type = ToastType.Error)
+                            }
+                        }
+                    },
                     onStartVoiceMode = onStartVoiceMode,
                     voiceState = voiceState,
                     onStopVoiceMode = vm.voiceSession::stop,
@@ -475,8 +505,7 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onEdit = {
-                    inputState.editingMessage = it.id
-                    inputState.setContents(it.parts)
+                    editingContextMessage = it
                 },
                 onForkMessage = {
                     scope.launch {

@@ -64,6 +64,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.withConversation
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.message.ChatMessage
+import me.rerere.rikkahub.ui.components.context.ContextWorkbench
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.hooks.ImeLazyListAutoScroller
 import me.rerere.rikkahub.ui.theme.ChatFontProvider
@@ -272,6 +273,10 @@ private fun ChatListNormal(
     // 聊天选择
     val selectedItems = selectionState.selectedItems
     var showExportSheet by remember { mutableStateOf(false) }
+    var contextMessageId by remember { mutableStateOf<Uuid?>(null) }
+    contextMessageId?.let { id ->
+        ContextWorkbench(conversation.id, id, onDismiss = { contextMessageId = null })
+    }
 
     // 自动跟随键盘滚动
     ImeLazyListAutoScroller(lazyListState = state)
@@ -368,6 +373,7 @@ private fun ChatListNormal(
                             onEdit = {
                                 onEdit(node.currentMessage)
                             },
+                            onContext = { contextMessageId = node.currentMessage.id },
                             onFork = {
                                 onForkMessage(node.currentMessage)
                             },

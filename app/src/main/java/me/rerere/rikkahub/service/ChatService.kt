@@ -28,6 +28,22 @@ import me.rerere.ai.agent.AgentEvent
 import me.rerere.ai.agent.AgentFinishReason
 import me.rerere.ai.agent.RetryAttempt
 import me.rerere.ai.agent.runAgent
+import me.rerere.ai.context.ContextSelection
+import me.rerere.ai.context.ContextSource
+import me.rerere.ai.context.ToolRunRecord
+import me.rerere.ai.context.contextAtBreakpoint
+import me.rerere.ai.context.contextText
+import me.rerere.ai.context.restoreContextOriginal
+import me.rerere.ai.context.saveContextEdit
+import me.rerere.ai.context.validateToolEdit
+import me.rerere.ai.context.hasOpaqueState
+import me.rerere.rikkahub.data.model.copyPresetMessageFiles
+import me.rerere.ai.provider.ProviderSetting
+import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.ai.ContextRequestStore
+import me.rerere.rikkahub.data.ai.RequestReviewGate
+import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.mapLocalFileUrls
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.ModelAbility
@@ -115,6 +131,7 @@ class ChatService(
     private val filesManager: FilesManager,
     private val folderRepository: FolderRepository,
     private val backgroundShellManager: BackgroundShellManager,
+    val contextRequestStore: ContextRequestStore,
 ) {
     /** 一轮生成的结果 */
     private sealed interface TurnResult {
@@ -300,7 +317,7 @@ class ChatService(
             id = conversationId,
             assistantId = assistant.id,
             newConversation = true
-        ).updateCurrentMessages(assistant.presetMessages)
+        ).updateCurrentMessages(copyPresetMessageFiles(assistant.presetMessages, ::copyChatFile))
     }
 
     // 引入会话配置之前创建的会话没有固定配置，加载时按助手当前的值补上，之后不再随助手变化。
@@ -560,6 +577,11 @@ class ChatService(
 
     /** 重新生成用户消息时去掉它之后的节点再回复；重新生成助手消息时在它的节点上新开一个分支 */
     fun regenerateAtMessage(conversationId: Uuid, messageId: Uuid) {
+        val current = sessionManager.get(conversationId)?.state?.value
+        if (current?.currentMessages?.lastOrNull()?.let { it.id == messageId && it.role == MessageRole.ASSISTANT } == true) {
+            previewContextRequest(conversationId, messageId, reviewBeforeSend = false)
+            return
+        }
         val session = sessionManager.getOrCreate(conversationId)
         synchronized(session) {
             val previousJob = session.getJob()
@@ -604,6 +626,36 @@ class ChatService(
         answer: String? = null,
     ) {
         val session = sessionManager.getOrCreate(conversationId)
+        val manual = session.state.value.currentMessages.firstNotNullOfOrNull { message ->
+            if (!message.contextState.manualToolExecution) null else message.parts.withIndex().firstOrNull {
+                val tool = it.value as? UIMessagePart.Tool
+                tool?.toolCallId == toolCallId && tool.isPending
+            }?.let { message to it.index }
+        }
+        if (manual != null) {
+            val (message, index) = manual
+            appScope.launch {
+                try {
+                    session.getJob()?.join()
+                    if (approved && answer == null) {
+                        rerunContextTool(conversationId, message.id, index, confirmedSideEffects = true)
+                        return@launch
+                    }
+                    editContextHistory(conversationId) { conversation ->
+                        val node = conversation.getMessageNodeByMessageId(message.id) ?: return@editContextHistory conversation
+                        if (node.currentMessage.id != message.id) return@editContextHistory conversation
+                        val tool = node.currentMessage.parts.getOrNull(index) as? UIMessagePart.Tool ?: return@editContextHistory conversation
+                        if (tool.toolCallId != toolCallId || !tool.isPending) return@editContextHistory conversation
+                        val updated = tool.copy(
+                            output = listOf(UIMessagePart.Text(answer ?: "Tool execution denied by user: $reason")),
+                            approvalState = if (answer != null) ToolApprovalState.Answered(answer) else ToolApprovalState.Denied(reason),
+                        )
+                        conversation.upsertMessage(node.id, node.currentMessage.copy(parts = node.currentMessage.parts.toMutableList().also { it[index] = updated }))
+                    }
+                } catch (e: Exception) { if (e is CancellationException) throw e else addError(e, conversationId) }
+            }
+            return
+        }
         synchronized(session) {
             val previousJob = session.getJob()
 
@@ -655,6 +707,7 @@ class ChatService(
      */
     private suspend fun runTurn(session: ConversationSession, regenerateNodeId: Uuid? = null): TurnResult {
         val conversationId = session.id
+        val runId = Uuid.random()
         // 先清理上一轮状态；确定历史后，仅为真正的续写恢复消息 ID。
         session.replyMessageId.value = null
         // 生成开始前失败时通知只用来取消 Live Update，用不到发送者名称
@@ -663,13 +716,7 @@ class ChatService(
             val settings = settingsStore.awaitLoaded()
             // 清掉上一轮的建议；没法继续执行的工具调用发给模型会被拒绝，先去掉。
             // 重新生成时只清理要发给模型的节点，被重新生成的节点保持原样，旧回复留作分支
-            val conversation = session.update { latest ->
-                val untilNode = regenerateNodeId
-                    ?.let { nodeId -> latest.messageNodes.indexOfFirst { it.id == nodeId } }
-                    ?.takeIf { it != -1 }
-                    ?: latest.messageNodes.size
-                latest.copy(chatSuggestions = emptyList()).withoutUnresumableToolCalls(untilNode)
-            }
+            val conversation = session.update { latest -> latest.copy(chatSuggestions = emptyList()) }
 
             val nodes = conversation.messageNodes
             val history = if (regenerateNodeId != null) {
@@ -695,14 +742,18 @@ class ChatService(
                 turn.model.displayName
             }
             warnIfToolsUnavailable(turn, conversationId)
+            session.flush()
 
             val (request, hooks) = requestFactory.createAgent(
                 turn = turn,
                 messages = history,
                 processingStatus = session.processingStatus,
                 takePendingParts = session.inbox::takeNotices,
+                runId = runId,
             )
             var finishReason: AgentFinishReason? = null
+            var capturedReply: UIMessage? = null
+            var finishStatus = "interrupted"
             try {
                 runAgent(request, hooks).flowOn(Dispatchers.IO).collect { event ->
                     when (event) {
@@ -710,6 +761,7 @@ class ChatService(
                             // 生成过程中只有网络重试的提示会留着，收到新内容说明重试已经成功
                             session.processingStatus.value = null
                             session.update { it.upsertMessage(replyNodeId, event.message) }
+                            capturedReply = event.message
                             session.replyMessageId.value = event.message.id
                             // 通知等边缘副作用由 ChatNotificationManager 消费；
                             // tryEmit 不挂起，事件丢失只影响单次通知更新，不能反压生成链
@@ -726,12 +778,17 @@ class ChatService(
                         is AgentEvent.Finished -> {
                             Log.i(TAG, "runTurn: finished (${event.reason})")
                             finishReason = event.reason
+                            finishStatus = if (event.reason is AgentFinishReason.AwaitingApproval) "awaiting_tool_approval" else "completed"
                         }
                     }
                 }
+            } catch (e: Exception) {
+                finishStatus = if (e is CancellationException) "cancelled" else "failed"
+                throw e
             } finally {
                 withContext(NonCancellable) {
                     session.processingStatus.value = null
+                    contextRequestStore.finish(runId, conversationId, finishStatus, capturedReply)
                     // 可能被取消了，或者意外结束，兜底保存
                     val finished = session.finishGeneration()
                     // 生成结束：取消 Live Update 通知，后台时发送完成通知
@@ -1256,12 +1313,330 @@ class ChatService(
         messageId: Uuid,
         parts: List<UIMessagePart>
     ) {
-        if (parts.isEmptyInputMessage()) return
-        val settings = settingsStore.awaitLoaded()
+        saveContextMessage(conversationId, messageId, parts)
+    }
 
-        mutate(conversationId) { conversation ->
-            conversation.editMessage(messageId, parts.replaceUserRegexes(settings.getStoredAssistantOf(conversation)))
+    /** History editing never dispatches the inbox, requests a model, or executes a tool. */
+    private suspend fun editContextHistory(conversationId: Uuid, transform: (Conversation) -> Conversation): Conversation =
+        withLoadedSession(conversationId) { session ->
+            check(session.getJob()?.isActive != true) { "Stop the current generation before editing history" }
+            session.update(transform)
+            session.flush()
         }
+
+    suspend fun authorizedContextTools(conversationId: Uuid) = withLoadedSession(conversationId) { session ->
+        requestFactory.createContext(settingsStore.awaitLoaded(), session.state.value).tools
+    }
+
+    suspend fun saveContextMessage(conversationId: Uuid, messageId: Uuid, parts: List<UIMessagePart>, originalIndices: List<Int?>? = null, expectedMessage: UIMessage? = null) {
+        val original = getConversation(conversationId)?.currentMessages?.find { it.id == messageId }
+            ?: throw NotFoundException("Message no longer exists")
+        check(expectedMessage == null || original == expectedMessage) { "消息已发生变化，请重新打开编辑器" }
+        val changedCalls = parts.filterIsInstance<UIMessagePart.Tool>().filter { edited ->
+            val previous = original.getTools().find { it.toolCallId == edited.toolCallId }
+            previous == null || previous.toolName != edited.toolName || previous.input != edited.input
+        }
+        if (changedCalls.isNotEmpty()) {
+            val authorized = authorizedContextTools(conversationId)
+            changedCalls.forEach { validateToolEdit(it, authorized) }
+        }
+        editContextHistory(conversationId) { conversation ->
+            val node = conversation.getMessageNodeByMessageId(messageId) ?: throw NotFoundException("Message no longer exists")
+            check(node.currentMessage == original) { "Message changed while editing; reopen the editor" }
+            val edited = parts.map { part ->
+                if (part is UIMessagePart.Tool && changedCalls.any { it.toolCallId == part.toolCallId }) {
+                    part.copy(approvalState = ToolApprovalState.Pending)
+                } else part
+            }
+            val saved = if (originalIndices == null) original.saveContextEdit(edited) else original.saveContextEdit(edited, originalIndices)
+            conversation.upsertMessage(node.id, if (changedCalls.isNotEmpty()) saved.copy(contextState = saved.contextState.copy(manualToolExecution = true)) else saved)
+        }
+    }
+
+    suspend fun restoreContextMessage(conversationId: Uuid, messageId: Uuid) {
+        editContextHistory(conversationId) { conversation ->
+            val node = conversation.getMessageNodeByMessageId(messageId) ?: throw NotFoundException("Message no longer exists")
+            conversation.upsertMessage(node.id, node.currentMessage.restoreContextOriginal())
+        }
+    }
+
+    suspend fun setContextExclusion(conversationId: Uuid, messageId: Uuid, partIndex: Int? = null, excluded: Boolean) {
+        editContextHistory(conversationId) { conversation ->
+            val node = conversation.getMessageNodeByMessageId(messageId) ?: throw NotFoundException("Message no longer exists")
+            val message = node.currentMessage
+            val state = message.contextState
+            val updated = if (partIndex == null) state.copy(excluded = excluded) else {
+                require(partIndex in message.parts.indices)
+                state.copy(excludedParts = if (excluded) state.excludedParts + partIndex else state.excludedParts - partIndex)
+            }
+            conversation.upsertMessage(node.id, message.copy(contextState = updated))
+        }
+    }
+
+    suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>) {
+        insertContextMessages(conversationId, afterMessageId, messages, validateNewTools = true)
+    }
+
+    private suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>, validateNewTools: Boolean) {
+        val calls = messages.flatMap { it.getTools() }
+        if (validateNewTools && calls.isNotEmpty()) {
+            val tools = authorizedContextTools(conversationId)
+            calls.forEach { validateToolEdit(it, tools) }
+        }
+        editContextHistory(conversationId) { conversation ->
+            val index = if (afterMessageId == null) -1 else conversation.messageNodes.indexOfFirst { it.currentMessage.id == afterMessageId }
+            require(afterMessageId == null || index >= 0) { "Insertion position no longer exists" }
+            val inserted = messages.map { message ->
+                if (message.getTools().isEmpty()) message else message.copy(
+                    parts = message.parts.map { if (it is UIMessagePart.Tool && !it.isExecuted) it.copy(approvalState = ToolApprovalState.Pending) else it },
+                    contextState = message.contextState.copy(manualToolExecution = true),
+                )
+            }
+            conversation.copy(messageNodes = conversation.messageNodes.take(index + 1) + inserted.map { MessageNode.of(it) } + conversation.messageNodes.drop(index + 1))
+        }
+    }
+
+    suspend fun contextConversations() = settingsStore.awaitLoaded().assistants.flatMap { assistant ->
+        conversationRepo.getConversationsOfAssistant(assistant.id).first()
+    }
+
+    /** mode: original, text (one per source), merged (one explicit user message). */
+    suspend fun copyContextMessages(sourceId: Uuid, messageIds: Set<Uuid>, targetId: Uuid, afterMessageId: Uuid?, mode: String) {
+        require(sourceId != targetId) { "Select another conversation as the copy destination" }
+        val source = getConversation(sourceId) ?: throw NotFoundException("Source conversation not found")
+        val target = getConversation(targetId) ?: throw NotFoundException("Target conversation not found")
+        val originals = source.currentMessages.filter { it.id in messageIds }
+        require(originals.size == messageIds.size && originals.isNotEmpty()) { "Selected source messages changed" }
+        require(mode in setOf("original", "text", "merged"))
+        if (mode == "original") {
+            require(originals.all { it.contextState.invalidOpaqueParts.isEmpty() }) { "Edited signed content cannot be copied as valid native data. Choose text conversion." }
+            val settings = settingsStore.awaitLoaded()
+            val destination = settings.getChatModelOf(target)?.findProvider(settings.providers)
+            originals.forEach { message ->
+                message.parts.forEach { part ->
+                    require((part !is UIMessagePart.Audio && part !is UIMessagePart.Video) ||
+                        (destination is ProviderSetting.Google && !(destination.useInteractionsApi && !destination.vertexAI && message.role == MessageRole.ASSISTANT))
+                    ) { "The destination serializer cannot preserve this audio/video part. Choose text conversion or a compatible Google conversation." }
+                    if (part is UIMessagePart.Tool) require(part.output.all { it is UIMessagePart.Text || it is UIMessagePart.Image }) {
+                        "This tool result contains a type the destination serializer cannot preserve. Choose explicit text conversion."
+                    }
+                    require(part !is UIMessagePart.ToolCall && part !is UIMessagePart.ToolResult && part !is UIMessagePart.Search) {
+                        "Legacy protocol parts must be converted to text before copying."
+                    }
+                }
+            }
+        }
+        if (mode == "original" && originals.any { it.parts.any(::hasOpaqueState) }) {
+            require(originals.all { it.contextState.invalidOpaqueParts.isEmpty() }) { "Edited signed content cannot be copied as valid native data. Choose text conversion." }
+            val settings = settingsStore.awaitLoaded()
+            fun protocol(provider: ProviderSetting?): String? = when (provider) {
+                is ProviderSetting.OpenAI -> if (provider.useResponseApi) "responses" else "chat_completions"
+                is ProviderSetting.Google -> if (provider.useInteractionsApi && !provider.vertexAI) "google_interactions" else "google_content"
+                is ProviderSetting.Claude -> "claude_messages"
+                is ProviderSetting.Account -> "responses"
+                null -> null
+            }
+            val from = protocol(settings.getChatModelOf(source)?.findProvider(settings.providers))
+            val to = protocol(settings.getChatModelOf(target)?.findProvider(settings.providers))
+            require(from != null && from == to) { "Provider-specific signed/server content cannot be copied natively to this provider. Choose explicit text conversion." }
+        }
+        val usedCalls = target.currentMessages.flatMap { it.getTools() }.mapTo(mutableSetOf()) { it.toolCallId }
+        val copies = originals.map { message ->
+            val idMap = (if (mode == "original") message.getTools() else emptyList()).associate { tool ->
+                val newId = if (hasOpaqueState(tool)) {
+                    require(tool.toolCallId !in usedCalls) { "Signed tool identifier collides in the destination. Choose text conversion." }
+                    tool.toolCallId
+                } else "ctx_${Uuid.random()}"
+                usedCalls += newId
+                tool.toolCallId to newId
+            }
+            val parts = if (mode == "original") message.parts.map { part ->
+                val cloned = part.mapLocalFileUrls(::copyChatFile)
+                if (cloned is UIMessagePart.Tool) cloned.copy(toolCallId = idMap.getValue(cloned.toolCallId), approvalState = ToolApprovalState.Pending) else cloned
+            } else listOf(UIMessagePart.Text(message.parts.joinToString("\n") { it.contextText() }))
+            message.copy(
+                id = Uuid.random(), parts = parts,
+                contextState = me.rerere.ai.context.ContextMessageState(sources = listOf(ContextSource(sourceId.toString(), message.id.toString(), description = "Copied ${message.role}"))),
+                usage = null, lastUsage = null, stepCount = null, translation = null, isContextCheckpoint = false,
+            )
+        }
+        val final = if (mode == "merged") listOf(UIMessage.user(copies.joinToString("\n\n") { "[${it.role}]\n${it.toText()}" }).copy(
+            contextState = me.rerere.ai.context.ContextMessageState(sources = copies.flatMap { it.contextState.sources }),
+        )) else copies
+        // Historical calls are context data; copying them neither authorizes nor executes a tool.
+        insertContextMessages(targetId, afterMessageId, final, validateNewTools = false)
+    }
+
+    /** Explicit tool-only action. A new attempt is persisted; no model request is made. */
+    fun rerunContextTool(conversationId: Uuid, messageId: Uuid, partIndex: Int, confirmedSideEffects: Boolean) {
+        require(confirmedSideEffects) { "Explicit confirmation is required because tool replay may have external side effects" }
+        val session = sessionManager.getOrCreate(conversationId)
+        synchronized(session) {
+            check(session.getJob()?.isActive != true) { "Conversation is busy" }
+            session.inbox.pause()
+            val job = launchGenerationJob(conversationId) {
+                try {
+                    ensureInitialized(session)
+                    val node = session.state.value.getMessageNodeByMessageId(messageId) ?: error("Message no longer exists")
+                    val original = node.currentMessage
+                    check(original.id == messageId) { "Tool call is no longer on the selected conversation path" }
+                    val tool = original.parts.getOrNull(partIndex) as? UIMessagePart.Tool ?: error("Tool call no longer exists")
+                    val definitions = authorizedContextTools(conversationId)
+                    val args = validateToolEdit(tool, definitions)
+                    val running = tool.copy(startedAt = kotlin.time.Clock.System.now(), finishedAt = null)
+                    val prior = ToolRunRecord(tool = tool, status = "previous")
+                    val beforeRun = original.saveContextEdit(original.parts).copy(contextState = original.contextState.copy(
+                        originalParts = original.contextState.originalParts ?: original.parts,
+                        toolRuns = original.contextState.toolRuns + prior + ToolRunRecord(tool = running, status = "running"),
+                    ))
+                    session.update { it.upsertMessage(node.id, beforeRun) }
+                    session.flush()
+                    var failed = false
+                    val output = try {
+                        definitions.single { it.name == tool.toolName }.execute(args).ifEmpty { listOf(UIMessagePart.Text("(no output)")) }
+                    } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                        failed = true
+                        listOf(UIMessagePart.Text("Tool execution failed: ${e.javaClass.simpleName}: ${e.message}"))
+                    }
+                    val completed = running.copy(output = output, approvalState = ToolApprovalState.Approved, finishedAt = kotlin.time.Clock.System.now())
+                    session.update { current ->
+                        val latest = current.getMessageNodeByMessageId(messageId)?.currentMessage ?: return@update current
+                        current.upsertMessage(node.id, latest.copy(
+                            parts = latest.parts.toMutableList().also { it[partIndex] = completed },
+                            contextState = latest.contextState.copy(toolRuns = latest.contextState.toolRuns.dropLast(1) + ToolRunRecord(tool = completed, status = if (failed) "failed" else "completed")),
+                        ))
+                    }
+                    session.flush()
+                } catch (e: Exception) {
+                    withContext(NonCancellable) {
+                        session.update { current ->
+                            val node = current.getMessageNodeByMessageId(messageId) ?: return@update current
+                            val latest = node.currentMessage
+                            val runs = latest.contextState.toolRuns
+                            if (runs.lastOrNull()?.status != "running") current else current.upsertMessage(node.id, latest.copy(
+                                contextState = latest.contextState.copy(toolRuns = runs.dropLast(1) + runs.last().copy(status = if (e is CancellationException) "interrupted" else "failed")),
+                            ))
+                        }
+                        session.flush()
+                    }
+                    if (e !is CancellationException) addError(e, conversationId)
+                    throw e
+                }
+            }
+            session.setJob(job)
+        }
+    }
+
+    /** Starts the real build pipeline and pauses at its serialized first request until gate.confirm(). */
+    suspend fun saveMessageForPreview(conversationId: Uuid, parts: List<UIMessagePart>): RequestReviewGate {
+        require(!parts.isEmptyInputMessage()) { "Message is empty" }
+        val settings = settingsStore.awaitLoaded()
+        val conversation = withLoadedSession(conversationId) { it.state.value }
+        val message = UIMessage(role = MessageRole.USER, parts = parts.replaceUserRegexes(settings.getStoredAssistantOf(conversation)))
+        insertContextMessages(conversationId, conversation.currentMessages.lastOrNull()?.id, listOf(message))
+        return previewContextRequest(conversationId, message.id, continueAfter = true)
+    }
+
+    fun previewContextRequest(
+        conversationId: Uuid,
+        messageId: Uuid,
+        partIndex: Int? = null,
+        continueAfter: Boolean = false,
+        selection: ContextSelection = ContextSelection(),
+        newVariant: Boolean = false,
+        reviewBeforeSend: Boolean = true,
+    ): RequestReviewGate {
+        val gate = RequestReviewGate()
+        val session = sessionManager.getOrCreate(conversationId)
+        synchronized(session) {
+            check(session.getJob()?.isActive != true) { "Conversation is busy" }
+            session.inbox.pause()
+            val job = launchGenerationJob(conversationId) {
+                var responseId = Uuid.random()
+                val runId = Uuid.random()
+                var capturedReply: UIMessage? = null
+                var finishStatus = "interrupted"
+                try {
+                    ensureInitialized(session)
+                    session.flush()
+                    val source = session.state.value
+                    val anchorIndex = source.messageNodes.indexOfFirst { it.currentMessage.id == messageId }
+                    require(anchorIndex >= 0) { "Breakpoint no longer exists" }
+                    val history = contextAtBreakpoint(source.currentMessages, messageId, partIndex, continueAfter, selection)
+                    val historyIds = history.mapTo(HashSet()) { it.id.toString() }
+                    val requestSelection = selection.copy(messageOrder = selection.messageOrder.filter { it in historyIds })
+                    val replace = source.messageNodes[anchorIndex].role == MessageRole.ASSISTANT
+                    val prefixParts = if (replace) history.lastOrNull()?.takeIf { it.id == messageId }?.parts.orEmpty() else emptyList()
+                    if (replace && !newVariant) responseId = messageId
+                    val turn = requestFactory.createContext(settingsStore.awaitLoaded(), source)
+                    val (request, hooks) = requestFactory.createAgent(
+                        turn, history, session.processingStatus,
+                        selection = requestSelection, reviewGate = gate.takeIf { reviewBeforeSend }, resumeLastMessage = false,
+                        responseMessageId = responseId, approveNewTools = true,
+                        runId = runId,
+                    )
+                    val replyNodeId = if (replace) source.messageNodes[anchorIndex].id else Uuid.random()
+                    var initialized = false
+                    runAgent(request, hooks).flowOn(Dispatchers.IO).collect { event ->
+                        when (event) {
+                            is AgentEvent.MessageUpdated -> {
+                                val updated = session.update { latest ->
+                                    if (!initialized) {
+                                        check(latest.messageNodes == source.messageNodes) { "History changed after the preview was prepared" }
+                                        initialized = true
+                                        if (replace && !newVariant) {
+                                            val node = latest.messageNodes[anchorIndex]
+                                            val original = node.currentMessage
+                                            val generated = event.message.copy(id = original.id, parts = prefixParts + event.message.parts, contextState = original.contextState.copy(
+                                                originalParts = original.contextState.originalParts ?: original.parts,
+                                                excludedParts = original.contextState.excludedParts.filterTo(mutableSetOf()) { it < prefixParts.size },
+                                                invalidOpaqueParts = original.contextState.invalidOpaqueParts.filterTo(mutableSetOf()) { it < prefixParts.size },
+                                                manualToolExecution = true, requestSelection = requestSelection,
+                                            ))
+                                            latest.upsertMessage(node.id, generated)
+                                        } else if (replace) {
+                                            val original = source.messageNodes[anchorIndex].currentMessage
+                                            latest.upsertMessage(replyNodeId, event.message.copy(parts = prefixParts + event.message.parts, contextState = original.contextState.copy(
+                                                originalParts = original.contextState.originalParts ?: original.parts,
+                                                excludedParts = original.contextState.excludedParts.filterTo(mutableSetOf()) { it < prefixParts.size },
+                                                invalidOpaqueParts = original.contextState.invalidOpaqueParts.filterTo(mutableSetOf()) { it < prefixParts.size },
+                                                manualToolExecution = true, requestSelection = requestSelection,
+                                            )))
+                                        }
+                                        else latest.copy(messageNodes = latest.messageNodes.take(anchorIndex + 1) + MessageNode(replyNodeId, listOf(event.message.copy(contextState = me.rerere.ai.context.ContextMessageState(manualToolExecution = true, requestSelection = requestSelection)))) + latest.messageNodes.drop(anchorIndex + 1))
+                                    } else {
+                                        val node = latest.messageNodes.first { it.id == replyNodeId }
+                                        val generated = event.message.copy(id = node.currentMessage.id, parts = prefixParts + event.message.parts, contextState = node.currentMessage.contextState)
+                                        latest.upsertMessage(replyNodeId, generated)
+                                    }
+                                }
+                                capturedReply = updated.currentMessages.firstOrNull { it.id == responseId }
+                                session.replyMessageId.value = responseId
+                            }
+                            is AgentEvent.Finished -> {
+                                finishStatus = if (event.reason is AgentFinishReason.AwaitingApproval) "awaiting_tool_approval" else "completed"
+                            }
+                            is AgentEvent.Retrying -> logRetry(event.attempt)
+                        }
+                    }
+                    // Direct regeneration retains its identity; re-associate snapshots with that visible reply.
+                    _generationDoneFlow.emit(conversationId)
+                } catch (e: Exception) {
+                    finishStatus = if (e is CancellationException) "cancelled" else "failed"
+                    if (e !is CancellationException) gate.fail(e.message ?: e.javaClass.simpleName)
+                    if (e !is CancellationException) addError(e, conversationId)
+                } finally {
+                    withContext(NonCancellable) {
+                        contextRequestStore.finish(runId, conversationId, finishStatus, capturedReply)
+                        session.processingStatus.value = null
+                        session.finishGeneration()
+                    }
+                }
+            }
+            gate.cancelRun = { job.cancel() }
+            session.setJob(job)
+        }
+        return gate
     }
 
     suspend fun forkConversationAtMessage(
@@ -1287,13 +1662,13 @@ class ChatService(
         nodeId: Uuid,
         selectIndex: Int
     ) {
-        mutate(conversationId) { conversation ->
+        editContextHistory(conversationId) { conversation ->
             val targetNode = conversation.messageNodes.firstOrNull { it.id == nodeId }
                 ?: throw NotFoundException("Message node not found")
             if (selectIndex !in targetNode.messages.indices) {
                 throw BadRequestException("Invalid selectIndex")
             }
-            if (targetNode.selectIndex == selectIndex) return@mutate conversation
+            if (targetNode.selectIndex == selectIndex) return@editContextHistory conversation
             conversation.selectBranch(nodeId, selectIndex)
         }
     }
@@ -1309,7 +1684,7 @@ class ChatService(
         messageId: Uuid,
         failIfMissing: Boolean = true,
     ) {
-        mutate(conversationId) { conversation ->
+        editContextHistory(conversationId) { conversation ->
             conversation.deleteMessage(messageId)
                 ?: if (failIfMissing) throw NotFoundException("Message not found") else conversation
         }

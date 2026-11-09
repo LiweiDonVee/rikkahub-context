@@ -40,6 +40,7 @@ import me.rerere.ai.provider.ProviderQuota
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationResult
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.provider.prepareRequest
 import me.rerere.ai.provider.runQuotaQuery
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.google.vertex.ServiceAccountTokenProvider
@@ -194,6 +195,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             }
         )
 
+        val serializedBody = params.prepareRequest("google_generate_content", url.toString(), requestBody)
         val request = transformRequest(
             providerSetting = providerSetting,
             request = Request.Builder()
@@ -201,8 +203,9 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
                 .configureSessionHeaders(url.toString(), params.sessionId)
                 .post(
-                    json.encodeToString(requestBody).toRequestBody("application/json".toMediaType())
+                    serializedBody.toRequestBody("application/json".toMediaType())
                 )
+                .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build()
         )
@@ -252,6 +255,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
             }
         ).newBuilder().addQueryParameter("alt", "sse").build()
 
+        val serializedBody = params.prepareRequest("google_generate_content", url.toString(), requestBody)
         val request = transformRequest(
             providerSetting = providerSetting,
             request = Request.Builder()
@@ -259,13 +263,14 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                 .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
                 .configureSessionHeaders(url.toString(), params.sessionId)
                 .post(
-                    json.encodeToString(requestBody).toRequestBody("application/json".toMediaType())
+                    serializedBody.toRequestBody("application/json".toMediaType())
                 )
+                .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
                 .configureReferHeaders(providerSetting.baseUrl)
                 .build()
         )
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText: request prepared")
 
         val responseId = Uuid.random().toString()
         val decoder = GoogleStreamDecoder(responseId, params.model.modelId)

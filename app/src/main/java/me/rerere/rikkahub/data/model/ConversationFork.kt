@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.model
 
 import kotlin.uuid.Uuid
+import me.rerere.ai.context.ContextSource
 
 private val forkTitleSuffixRegex = Regex("""\((\d+)\)$""")
 
@@ -27,6 +28,8 @@ internal fun Conversation.fork(
 ): Conversation? {
     val nodeIndex = messageNodes.indexOfFirst { node -> node.messages.any { it.id == messageId } }
     if (nodeIndex == -1) return null
+    val copiedFiles = mutableMapOf<String, String>()
+    fun ownFile(url: String) = copiedFiles.getOrPut(url) { copyFile(url) }
     return Conversation(
         id = Uuid.random(),
         assistantId = assistantId,
@@ -35,7 +38,14 @@ internal fun Conversation.fork(
             node.copy(
                 id = Uuid.random(),
                 messages = node.messages.map { message ->
-                    message.copy(parts = message.parts.map { it.mapLocalFileUrls(copyFile) })
+                    message.copy(
+                        parts = message.parts.map { it.mapLocalFileUrls(::ownFile) },
+                        contextState = message.contextState.copy(
+                            originalParts = message.contextState.originalParts?.map { it.mapLocalFileUrls(::ownFile) },
+                            toolRuns = message.contextState.toolRuns.map { it.copy(tool = it.tool.mapLocalFileUrls(::ownFile) as me.rerere.ai.ui.UIMessagePart.Tool) },
+                            sources = message.contextState.sources.ifEmpty { listOf(ContextSource(id.toString(), message.id.toString(), description = "Conversation branch")) },
+                        ),
+                    )
                 },
             )
         },

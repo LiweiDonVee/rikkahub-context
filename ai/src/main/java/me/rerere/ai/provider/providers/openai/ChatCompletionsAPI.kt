@@ -35,14 +35,15 @@ import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderSetting
-import me.rerere.ai.provider.TextGenerationResult
 import me.rerere.ai.provider.TextGenerationParams
-import me.rerere.ai.provider.stream.SseEvent
+import me.rerere.ai.provider.TextGenerationResult
+import me.rerere.ai.provider.prepareRequest
 import me.rerere.ai.provider.providers.PartGroup
 import me.rerere.ai.provider.providers.groupPartsByToolBoundary
+import me.rerere.ai.provider.stream.SseEvent
 import me.rerere.ai.registry.ModelRegistry
-import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.OpenRouterReasoningMetadata
+import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessagePart
@@ -90,16 +91,25 @@ class ChatCompletionsAPI(
                 providerSetting = providerSetting
             )
 
+        val serializedBody = params.prepareRequest(
+            "openai_chat_completions",
+            "${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}",
+            requestBody
+        )
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
             .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
-            .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
+            .post(serializedBody.toRequestBody("application/json".toMediaType()))
+            .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
+            .addHeader(
+                "Authorization",
+                "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}"
+            )
             .configureReferHeaders(providerSetting.baseUrl)
             .configureSessionHeaders(providerSetting.baseUrl, params.sessionId)
             .build()
 
-        Log.i(TAG, "generateText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "generateText: request prepared")
 
         val response = client.newCall(request).await()
         if (!response.isSuccessful) {
@@ -142,17 +152,26 @@ class ChatCompletionsAPI(
             stream = true,
         )
 
+        val serializedBody = params.prepareRequest(
+            "openai_chat_completions",
+            "${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}",
+            requestBody
+        )
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
             .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
-            .post(json.encodeToString(requestBody).toRequestBody("application/json".toMediaType()))
-            .addHeader("Authorization", "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}")
+            .post(serializedBody.toRequestBody("application/json".toMediaType()))
+            .tag(me.rerere.ai.provider.RequestControl::class.java, params.requestControl)
+            .addHeader(
+                "Authorization",
+                "Bearer ${keyRoulette.next(providerSetting.apiKey, providerSetting.id.toString())}"
+            )
             .addHeader("Content-Type", "application/json")
             .configureReferHeaders(providerSetting.baseUrl)
             .configureSessionHeaders(providerSetting.baseUrl, params.sessionId)
             .build()
 
-        Log.i(TAG, "streamText: ${json.encodeToString(requestBody)}")
+        Log.i(TAG, "streamText: request prepared")
 
         // just for debugging response body
         // println(client.newCall(request).await().body?.string())
@@ -236,7 +255,7 @@ class ChatCompletionsAPI(
                 "messages",
                 buildMessages(
                     messages = messages,
-                    includeHistoryReasoning = providerSetting.includeHistoryReasoning,
+                    includeHistoryReasoning = params.includeHistoryReasoning ?: providerSetting.includeHistoryReasoning,
                     includeOpenRouterReasoningDetails = isOpenRouter,
                     supportInputModalities = params.model.inputModalities,
                 )
@@ -258,9 +277,9 @@ class ChatCompletionsAPI(
             }
 
             // open router适配
-            if(isOpenRouter) {
+            if (isOpenRouter) {
                 params.sessionId?.let { put("session_id", it) }
-                if(params.model.outputModalities.contains(Modality.IMAGE)) {
+                if (params.model.outputModalities.contains(Modality.IMAGE)) {
                     put("modalities", buildJsonArray {
                         add("image")
                         add("text")
@@ -441,12 +460,12 @@ class ChatCompletionsAPI(
 
     private fun isModelAllowTemperature(model: Model): Boolean {
         val isMoonshotRestricted = ModelRegistry.KIMI_K2_5.match(model.modelId) ||
-                ModelRegistry.KIMI_K2_6.match(model.modelId) ||
-                ModelRegistry.KIMI_K3.match(model.modelId) ||
-                ModelRegistry.KIMI_K3_ALIAS.match(model.modelId)
+            ModelRegistry.KIMI_K2_6.match(model.modelId) ||
+            ModelRegistry.KIMI_K3.match(model.modelId) ||
+            ModelRegistry.KIMI_K3_ALIAS.match(model.modelId)
         return !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
-               !ModelRegistry.GPT_5.match(model.modelId) &&
-               !isMoonshotRestricted
+            !ModelRegistry.GPT_5.match(model.modelId) &&
+            !isMoonshotRestricted
     }
 
     private fun buildMessages(
@@ -479,17 +498,18 @@ class ChatCompletionsAPI(
     ) {
         val groups = groupPartsByToolBoundary(message.parts)
         val contentBuffer = mutableListOf<UIMessagePart>()
-        var reasoningPart: UIMessagePart.Reasoning? = null
+        val reasoningParts = mutableListOf<UIMessagePart.Reasoning>()
 
         for (group in groups) {
             when (group) {
                 is PartGroup.Content -> {
                     // 从当前 group 中提取 reasoning（保持顺序）
-                    if (includeReasoning) {
-                        group.parts.filterIsInstance<UIMessagePart.Reasoning>().firstOrNull()?.let {
-                            reasoningPart = it
-                        }
+                    val reasoning = group.parts.filterIsInstance<UIMessagePart.Reasoning>().filter {
+                        includeReasoning ||
+                            it.metadata?.get(me.rerere.ai.context.USER_AUTHORED_REASONING)?.jsonPrimitive?.content ==
+                            "true"
                     }
+                    reasoningParts += reasoning
                     group.parts
                         .filter { it is UIMessagePart.Text || it is UIMessagePart.Image }
                         .forEach { contentBuffer.add(it) }
@@ -500,13 +520,13 @@ class ChatCompletionsAPI(
                     buildAssistantMessageJson(
                         contentParts = contentBuffer,
                         tools = group.tools,
-                        reasoningPart = reasoningPart,
+                        reasoningParts = reasoningParts,
                         includeOpenRouterReasoningDetails = includeOpenRouterReasoningDetails,
                     )?.let { assistantMessage ->
                         add(assistantMessage)
                     }
                     contentBuffer.clear()
-                    reasoningPart = null // 清空，下一个 group 可能有新的 reasoning
+                    reasoningParts.clear()
 
                     // 紧跟 tool 结果消息
                     group.tools.forEach { tool ->
@@ -521,11 +541,11 @@ class ChatCompletionsAPI(
         }
 
         // 输出剩余内容
-        if (contentBuffer.isNotEmpty() || reasoningPart != null) {
+        if (contentBuffer.isNotEmpty() || reasoningParts.isNotEmpty()) {
             buildAssistantMessageJson(
                 contentParts = contentBuffer,
                 tools = emptyList(),
-                reasoningPart = reasoningPart,
+                reasoningParts = reasoningParts,
                 includeOpenRouterReasoningDetails = includeOpenRouterReasoningDetails,
             )?.let { assistantMessage ->
                 add(assistantMessage)
@@ -536,7 +556,7 @@ class ChatCompletionsAPI(
     private fun buildAssistantMessageJson(
         contentParts: List<UIMessagePart>,
         tools: List<UIMessagePart.Tool>,
-        reasoningPart: UIMessagePart.Reasoning?,
+        reasoningParts: List<UIMessagePart.Reasoning>,
         includeOpenRouterReasoningDetails: Boolean,
     ): JsonObject? {
         val hasUsableContent = contentParts.any { part ->
@@ -547,11 +567,17 @@ class ChatCompletionsAPI(
             }
         }
         val reasoningDetails = if (includeOpenRouterReasoningDetails) {
-            reasoningPart?.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails
+            JsonArray(
+                reasoningParts.flatMap { it.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails.orEmpty() }
+            )
         } else {
             null
         }
-        val hasReasoning = !reasoningPart?.reasoning.isNullOrBlank() || !reasoningDetails.isNullOrEmpty()
+        val reasoningText = reasoningParts.filter {
+            !includeOpenRouterReasoningDetails ||
+                it.metadataAs<OpenRouterReasoningMetadata>()?.reasoningDetails.isNullOrEmpty()
+        }.joinToString("\n\n") { it.reasoning }
+        val hasReasoning = reasoningText.isNotBlank() || !reasoningDetails.isNullOrEmpty()
         if (!hasUsableContent && !hasReasoning && tools.isEmpty()) {
             return null
         }
@@ -563,9 +589,8 @@ class ChatCompletionsAPI(
             if (hasReasoning) {
                 if (!reasoningDetails.isNullOrEmpty()) {
                     put("reasoning_details", reasoningDetails)
-                } else {
-                    put("reasoning_content", reasoningPart?.reasoning.orEmpty())
                 }
+                if (reasoningText.isNotBlank()) put("reasoning_content", reasoningText)
             }
 
             // content
@@ -722,7 +747,9 @@ class ChatCompletionsAPI(
             ?: jsonObject["content"]?.takeIf { it is JsonArray }?.let { arr ->
                 // Mistral接口
                 // {"id":"","object":"chat.completion.chunk","created":1772351733,"model":"magistral-medium-2509","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"好的"}]}]},"finish_reason":null}]}
-                arr.jsonArrayOrNull?.getOrNull(0)?.jsonObject?.get("thinking")?.jsonArrayOrNull?.getOrNull(0)?.jsonObjectOrNull?.get(
+                arr.jsonArrayOrNull?.getOrNull(
+                    0
+                )?.jsonObject?.get("thinking")?.jsonArrayOrNull?.getOrNull(0)?.jsonObjectOrNull?.get(
                     "text"
                 )?.jsonPrimitiveOrNull?.contentOrNull
             }
@@ -767,7 +794,9 @@ class ChatCompletionsAPI(
                     val imageObject = image.jsonObjectOrNull ?: return@forEach
                     val type = imageObject["type"]?.jsonPrimitive?.contentOrNull ?: return@forEach
                     if (type != "image_url") return@forEach
-                    val url = imageObject["image_url"]?.jsonObjectOrNull?.get("url")?.jsonPrimitive?.contentOrNull ?: return@forEach
+                    val url =
+                        imageObject["image_url"]?.jsonObjectOrNull?.get("url")?.jsonPrimitive?.contentOrNull
+                            ?: return@forEach
                     require(url.startsWith("data:image")) { "Only data uri is supported" }
                     add(UIMessagePart.Image(url))
                 }
@@ -787,7 +816,8 @@ class ChatCompletionsAPI(
             when (type) {
                 "url_citation" -> {
                     UIMessageAnnotation.UrlCitation(
-                        title = element.jsonObject["url_citation"]?.jsonObject?.get("title")?.jsonPrimitive?.contentOrNull
+                        title =
+                        element.jsonObject["url_citation"]?.jsonObject?.get("title")?.jsonPrimitive?.contentOrNull
                             ?: "",
                         url = element.jsonObject["url_citation"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
                             ?: "",
@@ -807,7 +837,8 @@ class ChatCompletionsAPI(
             totalTokens = jsonObject["total_tokens"]?.jsonPrimitive?.intOrNull ?: 0,
             // 各 provider 汇报缓存命中的字段形状不统一，按方言兜底解析（#1576）：
             // OpenAI 嵌套 -> Moonshot 顶层 cached_tokens -> DeepSeek prompt_cache_hit_tokens
-            cachedTokens = jsonObject["prompt_tokens_details"]?.jsonObjectOrNull?.get("cached_tokens")?.jsonPrimitive?.intOrNull
+            cachedTokens =
+            jsonObject["prompt_tokens_details"]?.jsonObjectOrNull?.get("cached_tokens")?.jsonPrimitive?.intOrNull
                 ?: jsonObject["cached_tokens"]?.jsonPrimitive?.intOrNull
                 ?: jsonObject["prompt_cache_hit_tokens"]?.jsonPrimitive?.intOrNull
                 ?: 0

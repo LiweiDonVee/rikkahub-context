@@ -9,6 +9,9 @@ import me.rerere.ai.agent.RetryPolicy
 import me.rerere.ai.agent.StepRequest
 import me.rerere.ai.agent.expandNotices
 import me.rerere.ai.agent.withRetry
+import me.rerere.ai.context.ContextSelection
+import me.rerere.ai.context.ContextExclusion
+import me.rerere.ai.context.compileContext
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.Model
@@ -58,7 +61,7 @@ private const val TAG = "ChatRequestFactory"
  * 正常对话和压缩用同一份上下文组装请求，系统提示词、工具定义、参数和 sessionId 都相同，
  * 压缩请求的前缀才能和上一轮对话一致，命中提示词缓存。
  */
-class ChatTurnContext(
+data class ChatTurnContext(
     val settings: Settings,
     val assistant: Assistant,
     val model: Model,
@@ -79,6 +82,7 @@ class ChatRequestFactory(
     private val memoryRepository: MemoryRepository,
     templateTransformer: TemplateTransformer,
     workspaceRepository: WorkspaceRepository,
+    private val contextRequestStore: ContextRequestStore,
 ) {
     private val inputTransformers: List<InputMessageTransformer> = listOf(
         TimeReminderTransformer,
@@ -131,7 +135,16 @@ class ChatRequestFactory(
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?>,
         takePendingParts: suspend () -> List<UIMessagePart> = { emptyList() },
+        selection: ContextSelection = ContextSelection(),
+        reviewGate: RequestReviewGate? = null,
+        resumeLastMessage: Boolean = true,
+        responseMessageId: Uuid = messages.lastOrNull()?.takeIf { resumeLastMessage && it.role == me.rerere.ai.core.MessageRole.ASSISTANT }?.id ?: Uuid.random(),
+        approveNewTools: Boolean = false,
+        runId: Uuid = Uuid.random(),
     ): Pair<AgentRequest, AgentHooks> {
+        val effectiveTurn = turn.copy(tools = turn.tools.filter { selection.includeSkills || it.name != "use_skill" }.map { tool ->
+            if (approveNewTools) tool.copy(needsApproval = { true }) else tool
+        })
         val request = AgentRequest(
             provider = usageRecorder.wrap(
                 providerManager.getProviderByType(turn.providerSetting),
@@ -139,14 +152,16 @@ class ChatRequestFactory(
             ),
             providerSetting = turn.providerSetting,
             messages = messages,
-            tools = turn.tools,
+            tools = effectiveTurn.tools,
             stream = turn.assistant.streamOutput,
             retry = turn.settings.retryPolicy(),
+            resumeLastMessage = resumeLastMessage,
+            responseMessageId = responseMessageId,
         )
         val hooks = object : AgentHooks {
             override suspend fun prepareStep(messages: List<UIMessage>): StepRequest {
                 Log.i(TAG, "prepareStep: ${turn.model.id}")
-                return buildStep(turn, messages, processingStatus)
+                return buildStep(effectiveTurn, messages, processingStatus, selection, reviewGate, responseMessageId, runId, if (!resumeLastMessage) selection.includeReasoning else null)
             }
 
             override suspend fun previewStep(message: UIMessage, newPartsFrom: Int) =
@@ -204,8 +219,16 @@ class ChatRequestFactory(
         turn: ChatTurnContext,
         messages: List<UIMessage>,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
+        selection: ContextSelection = ContextSelection(),
+        reviewGate: RequestReviewGate? = null,
+        responseMessageId: Uuid? = null,
+        runId: Uuid = Uuid.random(),
+        includeHistoryReasoning: Boolean? = null,
     ): StepRequest {
         val assistant = turn.assistant
+        val limited = messages.limitContext(assistant.contextMessageLimit)
+        val limitedIds = limited.mapTo(HashSet()) { it.id.toString() }
+        val compiled = compileContext(limited, selection.copy(messageOrder = selection.messageOrder.filter { it in limitedIds }))
         val requestMessages = buildList {
             val system = buildString {
                 val effectiveSystemPrompt =
@@ -226,13 +249,13 @@ class ChatRequestFactory(
                 // 工具prompt
                 turn.tools.forEach { tool ->
                     appendLine()
-                    append(tool.systemPrompt(turn.model, messages))
+                    append(tool.systemPrompt(turn.model, compiled.messages))
                 }
             }
             if (system.isNotBlank()) {
                 add(UIMessage.system(prompt = system).copy(isSynthetic = true))
             }
-            addAll(messages.limitContext(assistant.contextMessageLimit))
+            addAll(compiled.messages)
         }.transforms(
             transformers = inputTransformers,
             context = context,
@@ -241,6 +264,13 @@ class ChatRequestFactory(
             settings = turn.settings,
             processingStatus = processingStatus,
             workspaceCwd = turn.workspaceCwd,
+            ocrRequestControl = responseMessageId?.let { responseId ->
+                { ocrModel, ocrMessages -> contextRequestStore.control(
+                    conversationId = turn.conversationId, runId = runId, responseMessageId = responseId,
+                    model = ocrModel.modelId, messages = ocrMessages, selection = selection, exclusions = emptyList(),
+                    gate = reviewGate, reviewPurpose = "ocr",
+                ) }
+            },
         ).expandNotices()
         val params = TextGenerationParams(
             model = turn.model,
@@ -249,6 +279,7 @@ class ChatRequestFactory(
             maxTokens = assistant.maxTokens,
             tools = turn.tools,
             reasoningLevel = assistant.reasoningLevel,
+            includeHistoryReasoning = includeHistoryReasoning,
             customHeaders = buildList {
                 addAll(assistant.customHeaders)
                 addAll(turn.model.customHeaders)
@@ -258,6 +289,20 @@ class ChatRequestFactory(
                 addAll(turn.model.customBodies)
             },
             sessionId = turn.conversationId.toString(),
+            requestControl = responseMessageId?.let { responseId ->
+                contextRequestStore.control(
+                    conversationId = turn.conversationId,
+                    runId = runId,
+                    responseMessageId = responseId,
+                    model = turn.model.modelId,
+                    messages = requestMessages,
+                    selection = selection,
+                    exclusions = compiled.exclusions + messages.filter { it !in limited }.map {
+                        ContextExclusion(it.id.toString(), reason = "Outside configured context limit / checkpoint")
+                    },
+                    gate = reviewGate,
+                )
+            },
         )
         return StepRequest(requestMessages, params)
     }

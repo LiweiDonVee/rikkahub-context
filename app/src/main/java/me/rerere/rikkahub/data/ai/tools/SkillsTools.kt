@@ -31,13 +31,19 @@ fun createSkillTools(
             systemPrompt = { _, _ ->
                 buildString {
                     appendLine("**Skills**")
-                    appendLine("You have access to the following skills. Use the `use_skill` tool to load a skill's instructions when the user's request matches.")
+                    appendLine(
+                        "You have access to the following skills. Use the `use_skill` tool to load a skill's instructions when the user's request matches."
+                    )
                     appendLine("<available_skills>")
                     available.forEach { skill ->
                         appendLine("  <skill>")
                         // 技能可能来自第三方导入，转义并限长，防止 name/description 闭合标签注入任意系统提示
                         appendLine("    <name>${skill.name.escapeXml()}</name>")
-                        appendLine("    <description>${skill.description.take(MAX_SKILL_DESCRIPTION_LENGTH).escapeXml()}</description>")
+                        appendLine(
+                            "    <description>${skill.description.take(
+                                MAX_SKILL_DESCRIPTION_LENGTH
+                            ).escapeXml()}</description>"
+                        )
                         appendLine("  </skill>")
                     }
                     append("</available_skills>")
@@ -78,7 +84,10 @@ fun createSkillTools(
                     require(target.exists()) { "File '$path' not found in skill '$name'" }
                     target.readText()
                 }
-                listOf(UIMessagePart.Text(content))
+                listOf(UIMessagePart.Text(content, metadata = buildJsonObject {
+                    put("context_skill_name", skill.name)
+                    put("context_skill_path", path ?: "SKILL.md")
+                }))
             }
         )
     )

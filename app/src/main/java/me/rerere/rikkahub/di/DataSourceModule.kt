@@ -15,6 +15,8 @@ import me.rerere.mediagen.provider.MediaGenerationManager
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.ai.AIRequestInterceptor
+import me.rerere.rikkahub.data.ai.ContextRequestInterceptor
+import me.rerere.rikkahub.data.ai.ContextRequestStore
 import me.rerere.rikkahub.data.ai.ConversationMetaGenerator
 import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
 import me.rerere.rikkahub.data.ai.MemoryConsolidator
@@ -52,6 +54,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 val dataSourceModule = module {
+    single { get<AppDatabase>().contextRequestDao() }
+    single { ContextRequestStore(get()) }
     single {
         SettingsStore(context = get(), scope = get())
     }
@@ -232,6 +236,7 @@ val dataSourceModule = module {
                 }
             }
             .addNetworkInterceptor(RequestLoggingInterceptor())
+            .addNetworkInterceptor(ContextRequestInterceptor())
             .addInterceptor(AIRequestInterceptor())
             .addInterceptor(HttpLoggingInterceptor().apply {
                 redactHeader("Proxy-Authorization")

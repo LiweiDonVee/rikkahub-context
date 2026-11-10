@@ -45,6 +45,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -65,6 +67,7 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
@@ -305,6 +308,15 @@ private fun ChatPageContent(
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
     val contextService: me.rerere.rikkahub.service.ChatService = koinInject()
+    val contextConversation by rememberUpdatedState(conversation)
+    var insertingContext by remember { mutableStateOf(false) }
+    if (insertingContext) me.rerere.rikkahub.ui.components.context.ContextInsertionSheet(conversation, onDismiss = { insertingContext = false }, onInserted = { nodes ->
+        insertingContext = false
+        scope.launch {
+            val index = snapshotFlow { contextConversation.messageNodes.indexOfFirst { it.id == nodes.firstOrNull() } }.first { it >= 0 }
+            chatListState.animateScrollToItem(index)
+        }
+    })
     var editingContextMessage by remember { mutableStateOf<UIMessage?>(null) }
     editingContextMessage?.let { original ->
         me.rerere.rikkahub.ui.components.context.MessagePartsEditor(
@@ -383,6 +395,7 @@ private fun ChatPageContent(
                     onNewChat = {
                         navigateToChatPage(navController)
                     },
+                    onInsertContext = { insertingContext = true },
                     onShowOverview = {
                         selectionState.selecting = false
                         previewMode = true
@@ -669,6 +682,7 @@ private fun TopBar(
     hazeState: HazeState,
     showCapsuleBackground: Boolean,
     onNewChat: () -> Unit,
+    onInsertContext: () -> Unit,
     onShowOverview: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
@@ -750,6 +764,7 @@ private fun TopBar(
                 }
                 ChatPageMenu(
                     enabled = conversation.messageNodes.isNotEmpty(),
+                    onInsertContext = onInsertContext,
                     onShowOverview = onShowOverview,
                     onExport = onExport,
                     onDelete = onDelete,
@@ -795,10 +810,11 @@ private fun TopBar(
     }
 }
 
-// 顶栏右侧的会话菜单；空对话没有内容可概览、导出或删除，菜单项全部置灰
+// 空会话也可以新建或导入上下文；概览、导出和删除仍根据历史启用。
 @Composable
 private fun ChatPageMenu(
     enabled: Boolean,
+    onInsertContext: () -> Unit,
     onShowOverview: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
@@ -812,6 +828,7 @@ private fun ChatPageMenu(
         index: Int,
         count: Int,
         destructive: Boolean = false,
+        itemEnabled: Boolean = enabled,
         onClick: () -> Unit,
     ) {
         DropdownMenuItem(
@@ -822,7 +839,7 @@ private fun ChatPageMenu(
             },
             shape = MenuDefaults.itemShape(index = index, count = count).shape,
             leadingIcon = { Icon(icon, contentDescription = null) },
-            enabled = enabled,
+            enabled = itemEnabled,
             colors = if (destructive) {
                 val errorColor = MaterialTheme.colorScheme.error
                 MenuDefaults.itemColors(textColor = errorColor, leadingIconColor = errorColor)
@@ -841,18 +858,19 @@ private fun ChatPageMenu(
             onDismissRequest = { expanded = false },
         ) {
             DropdownMenuGroup(shapes = MenuDefaults.groupShape(index = 0, count = 2)) {
+                MenuItem(text = "插入上下文", icon = HugeIcons.MessageAdd01, index = 0, count = 3, itemEnabled = true, onClick = onInsertContext)
                 MenuItem(
                     text = stringResource(R.string.chat_page_conversation_map),
                     icon = HugeIcons.LeftToRightListBullet,
-                    index = 0,
-                    count = 2,
+                    index = 1,
+                    count = 3,
                     onClick = onShowOverview,
                 )
                 MenuItem(
                     text = stringResource(R.string.export_title),
                     icon = HugeIcons.Share04,
-                    index = 1,
-                    count = 2,
+                    index = 2,
+                    count = 3,
                     onClick = onExport,
                 )
             }

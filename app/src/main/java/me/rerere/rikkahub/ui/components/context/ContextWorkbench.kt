@@ -31,6 +31,7 @@ import me.rerere.hugeicons.stroke.*
 import me.rerere.rikkahub.data.ai.RequestReviewGate
 import me.rerere.rikkahub.data.db.entity.ContextRequestEntity
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.ContextInsertionPosition
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.components.ui.*
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -60,8 +61,7 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
     var working by remember { mutableStateOf(false) }
     var editorMessage by remember { mutableStateOf<UIMessage?>(null) }
     var appendedPart by remember { mutableStateOf<UIMessagePart?>(null) }
-    var insertion by remember { mutableStateOf<UIMessage?>(null) }
-    var insertionAfter by remember { mutableStateOf<Uuid?>(null) }
+    var insertionPosition by remember { mutableStateOf<ContextInsertionPosition?>(null) }
     var choosingMessage by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
     var replayPart by remember { mutableStateOf<Int?>(null) }
@@ -81,9 +81,8 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
     }
     fun edit(newPart: UIMessagePart? = null) { appendedPart = newPart; editorMessage = message }
     fun insert(before: Boolean) {
-        val index = conversation.currentMessages.indexOfFirst { it.id == messageId }
-        insertionAfter = if (before) conversation.currentMessages.getOrNull(index - 1)?.id else message?.id
-        insertion = UIMessage(role = MessageRole.USER, parts = emptyList())
+        val node = conversation.getMessageNodeByMessageId(messageId)
+        insertionPosition = if (node == null) ContextInsertionPosition.End else if (before) ContextInsertionPosition.Before(node.id) else ContextInsertionPosition.After(node.id)
     }
     fun preview(part: Int?, continueAfter: Boolean) = perform {
         val target = if (createBranch) service.forkConversationAtMessage(conversationId, messageId).id else conversationId
@@ -212,7 +211,7 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
                         val node = sourceConversation.getMessageNodeByMessageId(Uuid.parse(source.messageId)) ?: error("来源是运行时内容或已删除")
                         onDismiss(); navigateToChatPage(navigator, id, nodeId = node.id)
                     } }) }
-                    3 -> item { ContextTransfer(conversation, messageId, service, !busy) { ids, target, after, mode -> perform { service.copyContextMessages(conversationId, ids, target, after, mode); feedback = "已复制到目标会话" } } }
+                    3 -> item { ContextTransferPanel(fixedSource = conversation, initialMessageId = messageId, enabled = !busy, onDone = { target, nodes -> onDismiss(); navigateToChatPage(navigator, target, nodeId = nodes.firstOrNull()) }) }
                 }
             }
         }
@@ -230,9 +229,10 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
         loadTools = { service.authorizedContextTools(conversationId) },
         onSave = { edited, indices -> service.saveContextMessage(conversationId, original.id, edited.parts, indices, original) },
     ) }
-    insertion?.let { draft -> MessagePartsEditor(draft, onDismiss = { insertion = null }, title = "插入消息", isNew = true, allowRoleChange = true,
-        loadTools = { service.authorizedContextTools(conversationId) }, onSave = { edited, _ -> service.insertContextMessages(conversationId, insertionAfter, listOf(edited)); messageId = edited.id },
-    ) }
+    insertionPosition?.let { position -> ContextInsertionSheet(conversation, position, onDismiss = { insertionPosition = null }, onInserted = { nodes ->
+        insertionPosition = null
+        service.getConversationFlow(conversationId).value.messageNodes.firstOrNull { it.id == nodes.firstOrNull() }?.let { messageId = it.currentMessage.id }
+    }) }
     replayPart?.let { index -> AlertDialog(onDismissRequest = { replayPart = null }, title = { Text("重新执行此工具？") }, text = { Text("使用已保存的参数运行所选工具。工具可能产生外部副作用。") }, confirmButton = { TextButton(onClick = { perform { service.rerunContextTool(conversationId, messageId, index, confirmedSideEffects = true); replayPart = null } }) { Text("执行工具") } }, dismissButton = { TextButton(onClick = { replayPart = null }) { Text("取消") } }) }
     gate?.let { active -> RequestPreviewDialog(active, onDismiss = { active.cancel(); gate = null }, onSend = { gate = null; if (requestConversationId != conversationId) { onDismiss(); navigateToChatPage(navigator, requestConversationId) } }) }
 }
@@ -305,33 +305,6 @@ private fun ContextInspector(snapshots: List<ContextRequestEntity>, messageId: U
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ContextTransfer(source: Conversation, currentId: Uuid, service: ChatService, enabled: Boolean, onCopy: (Set<Uuid>, Uuid, Uuid?, String) -> Unit) {
-    var targets by remember { mutableStateOf<List<Conversation>>(emptyList()) }
-    var targetId by remember { mutableStateOf<Uuid?>(null) }
-    var target by remember { mutableStateOf<Conversation?>(null) }
-    var selected by remember { mutableStateOf(setOf(currentId)) }
-    var after by remember { mutableStateOf<Uuid?>(null) }
-    var mode by remember { mutableStateOf("original") }
-    LaunchedEffect(Unit) { targets = service.contextConversations().filter { it.id != source.id } }
-    LaunchedEffect(targetId) { target = targetId?.let { service.getConversation(it) }; after = target?.currentMessages?.lastOrNull()?.id }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("选择连续或非连续消息，再指定目标与插入位置。复制仅保存，不请求模型。", style = MaterialTheme.typography.bodySmall)
-        CardGroup(title = { Text("选择消息") }) { source.currentMessages.forEach { message ->
-            item(onClick = { selected = if (message.id in selected) selected - message.id else selected + message.id },
-                leadingContent = { Checkbox(checked = message.id in selected, onCheckedChange = { selected = if (it) selected + message.id else selected - message.id }) },
-                headlineContent = { Text(contextRoleLabel(message.role)) },
-                supportingContent = { Text(partPreview(message.parts.firstOrNull()), maxLines = 3, overflow = TextOverflow.Ellipsis) },
-            )
-        } }
-        ContextChoice("目标会话", targets.find { it.id == targetId }?.title ?: "选择会话", targets.map { it.id to it.title.ifEmpty { it.id.toString().take(8) } }) { targetId = it }
-        ContextChoice("插入位置", after?.let { "消息 ${it.toString().take(8)} 之后" } ?: "开头", listOf(null to "开头") + target?.currentMessages.orEmpty().map { it.id to "${it.role}: ${it.toText().take(50)} 之后" }) { after = it }
-        ContextChoice("复制方式", mapOf("original" to "原样复制", "text" to "转普通文本", "merged" to "合并为一条用户消息").getValue(mode), listOf("original" to "原样复制", "text" to "转普通文本", "merged" to "合并为一条用户消息")) { mode = it }
-        Text("原样复制保留角色、内容和 Provider metadata。复制后可继续编辑，并在请求预览中查看实际发送内容。", style = MaterialTheme.typography.bodySmall)
-        Button(onClick = { targetId?.let { onCopy(selected, it, after, mode) } }, enabled = enabled && targetId != null && selected.isNotEmpty()) { Text("复制到指定位置") }
     }
 }
 

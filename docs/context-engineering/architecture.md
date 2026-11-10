@@ -48,6 +48,12 @@ Room schema 为 33，从上游 32 自动迁移。消息 JSON 采用默认扩展�
 
 本地模板附件在初始化时为各会话分别复制；内容、恢复部件和工具记录共享同次复制映射。模板作者的编辑过程不新增为新聊天的恢复基线。
 
+## 查找与插入
+
+`ContextConversationPicker` 供来源和目标共用。助手名称来自当前 Settings，筛选只作用于选择器；`ConversationRepository.contextConversations` 使用轻量 Room 投影与 Paging3，每页 20 条，初始 40 条，覆盖文件夹内会话。选定会话后才加载完整历史。来源消息和位置列表使用独立 LazyColumn 与内容搜索。
+
+`ContextInsertionPosition` 表示开头、结尾、节点之前或节点之后。ChatService 在 Session 的最新状态中解析节点位置，插入操作返回新节点 ID，界面据此定位。新建、目标发起导入及来源发起复制共用这条路径；原有按消息 ID 插入接口继续适配到节点位置。
+
 ## Provider 集成
 
 `ChatRequestFactory` 在原有上下文条数与压缩检查点后编译请求副本，再经过系统提示、记忆、工具提示和输入转换。

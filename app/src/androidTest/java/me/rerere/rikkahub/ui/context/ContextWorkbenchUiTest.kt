@@ -28,6 +28,10 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.data.model.ContextInsertionPosition
+import me.rerere.rikkahub.ui.components.context.ContextConversationPicker
+import me.rerere.rikkahub.ui.components.context.ContextInsertionSheet
+import me.rerere.rikkahub.ui.components.context.ContextTransferPanel
 import me.rerere.rikkahub.ui.components.context.ContextWorkbench
 import me.rerere.rikkahub.ui.components.context.MessagePartsEditor
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPresetMessages
@@ -53,15 +57,20 @@ class ContextWorkbenchUiTest {
     private var createdConversation = false
     private var temporaryAssistant: Uuid? = null
     private var previousAssistant: Uuid? = null
+    private val extraConversations = mutableListOf<Uuid>()
+    private val extraAssistants = mutableListOf<Uuid>()
 
     @After fun cleanup() = runBlocking {
         scenario?.close()
+        extraConversations.forEach { service.removeConversationReference(it); service.deleteConversation(it) }
+        if (extraAssistants.isNotEmpty()) settings.update { it.copy(assistants = it.assistants.filterNot { a -> a.id in extraAssistants }) }
         if (createdConversation) { service.removeConversationReference(conversationId); service.deleteConversation(conversationId) }
         temporaryAssistant?.let { id -> settings.update { it.copy(assistants = it.assistants.filterNot { a -> a.id == id }, assistantId = previousAssistant ?: it.assistantId) } }
         Unit
     }
-    private suspend fun persist(message: UIMessage) {
-        GlobalContext.get().get<ConversationRepository>().insertConversation(Conversation.ofId(conversationId, messages = listOf(MessageNode.of(message))).copy(title = "Context UI fixture"))
+    private suspend fun persist(message: UIMessage) = persist(listOf(message))
+    private suspend fun persist(messages: List<UIMessage>) {
+        GlobalContext.get().get<ConversationRepository>().insertConversation(Conversation.ofId(conversationId, messages = messages.map { MessageNode.of(it) }).copy(title = "Context UI fixture"))
         service.addConversationReference(conversationId); service.initializeConversation(conversationId); createdConversation = true
     }
     private fun show(content: @Composable () -> Unit) {
@@ -155,6 +164,118 @@ class ContextWorkbenchUiTest {
         assertTrue(service.getConversation(conversationId)!!.currentMessages[1].parts.single() is UIMessagePart.Reasoning)
         assertTrue(service.contextRequestStore.observe(conversationId).first().isEmpty())
     }
+    private suspend fun extraConversation(title: String, assistantId: Uuid, messages: List<UIMessage>, created: Long = 1): Conversation {
+        val conversation = Conversation.ofId(Uuid.random(), assistantId = assistantId, messages = messages.map { MessageNode.of(it) })
+            .copy(title = title, createAt = java.time.Instant.ofEpochMilli(created), updateAt = java.time.Instant.ofEpochMilli(100 - created))
+        GlobalContext.get().get<ConversationRepository>().insertConversation(conversation)
+        extraConversations += conversation.id
+        return conversation
+    }
+
+    @Test fun conversationBrowserSearchesAssistantsTitlesAndSortsWithoutChangingTheActiveAssistant() = runBlocking {
+        val active = settings.awaitLoaded().assistantId
+        val alpha = Assistant(name = "Transfer Alpha")
+        val beta = Assistant(name = "Transfer Beta")
+        extraAssistants += listOf(alpha.id, beta.id)
+        settings.update { it.copy(assistants = it.assistants + alpha + beta) }
+        repeat(45) { extraConversation("Transfer paged ${it.toString().padStart(3, '0')}", alpha.id, emptyList(), it.toLong()) }
+        val older = extraConversation("Transfer lookup Beta older", beta.id, emptyList(), 1)
+        extraConversation("Transfer lookup Beta newer", beta.id, emptyList(), 2)
+        var chosen by mutableStateOf<Conversation?>(null)
+        show { if (chosen == null) ContextConversationPicker("选择目标会话", conversationId, onDismiss = {}, onSelect = { chosen = it }) }
+        click("全部助手"); waitFor { findText("筛选助手") != null }; setText("", "Beta"); click("Transfer Beta"); waitFor { findText("筛选助手") == null }
+        waitFor { findText("Transfer lookup Beta older") != null }
+        click("最近更新"); click("最早创建")
+        waitFor { findText("Transfer lookup Beta newer") != null }
+        val before = android.graphics.Rect(); val after = android.graphics.Rect()
+        findText("Transfer lookup Beta older")!!.getBoundsInScreen(before)
+        findText("Transfer lookup Beta newer")!!.getBoundsInScreen(after)
+        assertTrue(before.top < after.top)
+        setText("", "Beta older")
+        waitFor { findText("Transfer lookup Beta newer") == null }
+        screenshot("context-v4-conversation-picker.png")
+        click("Transfer lookup Beta older")
+        waitFor { chosen != null }
+        assertEquals(older.id, chosen!!.id)
+        assertEquals(active, settings.settingsFlow.value.assistantId)
+    }
+
+    @Test fun importingFromTheDestinationKeepsItsMiddleAnchorWhileSearchingAndSelectingNoncontiguousMessages() = runBlocking {
+        settings.awaitLoaded()
+        val neighbors = listOf("Target first", "Target middle", "Target last").map { UIMessage.user(it) }
+        persist(neighbors)
+        val target = service.getConversation(conversationId)!!
+        val assistant = Assistant(name = "Import agent")
+        extraAssistants += assistant.id
+        settings.update { it.copy(assistants = it.assistants + assistant) }
+        val source = extraConversation("Import source fixture", assistant.id, listOf(UIMessage.user("Import first"), UIMessage.assistant("Skip this reply"), UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Reasoning("Import third")))))
+        var inserted by mutableStateOf<List<Uuid>>(emptyList())
+        show { if (inserted.isEmpty()) ContextInsertionSheet(target, ContextInsertionPosition.Before(target.messageNodes[1].id), onDismiss = {}, onInserted = { inserted = it }) }
+        click("从其他会话导入"); click("查找来源会话")
+        setText("", "Import source"); click("Import source fixture")
+        waitFor { findText("选择来源消息") != null }
+        setText("", "Import")
+        click("Import first"); click("Import third", substring = true); click("使用 2 条")
+        waitFor { findText("第 2 条", substring = true) != null }
+        screenshot("context-v4-import-anchor.png")
+        click("导入到此位置")
+        waitFor { inserted.size == 2 }
+        val saved = service.getConversation(conversationId)!!
+        assertEquals(listOf("Target first", "Import first", "", "Target middle", "Target last"), saved.currentMessages.map { it.toText() })
+        assertEquals("Import third", (saved.currentMessages[2].parts.single() as UIMessagePart.Reasoning).reasoning)
+        assertEquals(source.id.toString(), saved.currentMessages[1].contextState.sources.single().conversationId)
+        assertEquals(inserted, saved.messageNodes.subList(1, 3).map { it.id })
+        assertTrue(service.contextRequestStore.observe(conversationId).first().isEmpty())
+    }
+
+    @Test fun newContextUsesTheSearchablePositionPickerAndAlsoWorksInAnEmptyConversation() = runBlocking {
+        settings.awaitLoaded()
+        persist(listOf(UIMessage.user("Position first"), UIMessage.assistant("Position middle")))
+        var inserted by mutableStateOf<List<Uuid>>(emptyList())
+        show { val conversation by service.getConversationFlow(conversationId).collectAsState()
+            if (inserted.isEmpty()) ContextInsertionSheet(conversation, onDismiss = {}, onInserted = { inserted = it })
+        }
+        click("会话结尾"); setText("", "Position middle")
+        screenshot("context-v4-position-picker.png")
+        click("插在第 2 条之前"); click("新建上下文"); click("添加内容"); click("正文")
+        setText("", "Inserted in the middle"); click("保存")
+        waitFor { inserted.isNotEmpty() }
+        assertEquals(listOf("Position first", "Inserted in the middle", "Position middle"), service.getConversation(conversationId)!!.currentMessages.map { it.toText() })
+        assertTrue(service.contextRequestStore.observe(conversationId).first().isEmpty())
+        scenario?.close()
+        val empty = extraConversation("Empty target fixture", settings.settingsFlow.value.assistantId, emptyList())
+        service.addConversationReference(empty.id); service.initializeConversation(empty.id)
+        inserted = emptyList()
+        show { if (inserted.isEmpty()) ContextInsertionSheet(service.getConversationFlow(empty.id).value, onDismiss = {}, onInserted = { inserted = it }) }
+        click("新建上下文"); click("添加内容"); click("正文"); setText("", "First context in an empty conversation"); click("保存")
+        waitFor { inserted.size == 1 }
+        assertEquals("First context in an empty conversation", service.getConversation(empty.id)!!.currentMessages.single().toText())
+        assertTrue(service.contextRequestStore.observe(empty.id).first().isEmpty())
+    }
+
+    @Test fun copyingOutUsesTheSameTargetBrowserAndAnExplicitPosition() = runBlocking {
+        settings.awaitLoaded()
+        val sourceMessage = UIMessage.assistant("Outbound selected message")
+        persist(listOf(sourceMessage, UIMessage.user("Keep this source neighbor")))
+        val source = service.getConversation(conversationId)!!
+        val target = extraConversation("Outbound target fixture", settings.settingsFlow.value.assistantId, listOf(UIMessage.user("Anchor one"), UIMessage.assistant("Anchor two")))
+        var copied by mutableStateOf<List<Uuid>>(emptyList())
+        var destination: Uuid? = null
+        show { if (copied.isEmpty()) Column(Modifier.fillMaxSize().padding(16.dp)) {
+            ContextTransferPanel(fixedSource = source, initialMessageId = sourceMessage.id, onDone = { id, nodes -> destination = id; copied = nodes })
+        } }
+        click("查找目标会话"); waitFor { findText("选择目标会话") != null }
+        setText("", "Outbound target"); click("Outbound target fixture")
+        waitFor { findText("会话结尾") != null }
+        click("会话结尾"); waitFor { findText("选择插入位置") != null }
+        setText("", "Anchor two"); click("插在第 2 条之前")
+        click("复制并打开目标"); waitFor { copied.size == 1 }
+        assertEquals(target.id, destination)
+        assertEquals(listOf("Anchor one", "Outbound selected message", "Anchor two"), service.getConversation(target.id)!!.currentMessages.map { it.toText() })
+        assertEquals(source.currentMessages, service.getConversation(conversationId)!!.currentMessages)
+        assertTrue(service.contextRequestStore.observe(target.id).first().isEmpty())
+    }
+
     private fun findNode(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         node ?: return null
         if (predicate(node)) return node
@@ -181,6 +302,7 @@ class ContextWorkbenchUiTest {
             findNode(instrumentation.uiAutomation.rootInActiveWindow) { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             SystemClock.sleep(100)
         }
+        if (node == null) screenshot("context-v4-ui-failure.png")
         assertNotNull("Editable field '$before' was not found", node)
         assertTrue(node!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, after) }))
         instrumentation.waitForIdleSync()

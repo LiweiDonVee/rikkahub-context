@@ -51,7 +51,7 @@ git fetch --unshallow
 - Namespace：`me.rerere.rikkahub`。
 - 独立 applicationId：`me.rerere.rikkahub.context`。
 - Debug applicationId：`me.rerere.rikkahub.context.debug`。
-- 当前版本：`3.1.2-context.3`，versionCode 197。
+- 当前版本：`3.1.2-context.4`，versionCode 198。
 
 当前公开 APK 使用 Debug 签名。Release 构建可按 `app/build.gradle.kts` 的 signingConfig，在本机 `local.properties` 配置 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`，然后运行：
 

@@ -55,6 +55,7 @@ import dev.chrisbanes.haze.hazeSource
 import kotlin.math.roundToInt
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.datastore.Settings
@@ -64,6 +65,8 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.withConversation
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.message.ChatMessage
+import me.rerere.rikkahub.data.model.ContextInsertionPosition
+import me.rerere.rikkahub.ui.components.context.ContextInsertionSheet
 import me.rerere.rikkahub.ui.components.context.ContextWorkbench
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.hooks.ImeLazyListAutoScroller
@@ -274,6 +277,14 @@ private fun ChatListNormal(
     val selectedItems = selectionState.selectedItems
     var showExportSheet by remember { mutableStateOf(false) }
     var contextMessageId by remember { mutableStateOf<Uuid?>(null) }
+    var contextInsertion by remember { mutableStateOf<ContextInsertionPosition?>(null) }
+    contextInsertion?.let { position -> ContextInsertionSheet(conversation, position, onDismiss = { contextInsertion = null }, onInserted = { nodes ->
+        contextInsertion = null
+        scope.launch {
+            val index = snapshotFlow { conversationUpdated.messageNodes.indexOfFirst { it.id == nodes.firstOrNull() } }.first { it >= 0 }
+            state.animateScrollToItem(index)
+        }
+    }) }
     contextMessageId?.let { id ->
         ContextWorkbench(conversation.id, id, onDismiss = { contextMessageId = null })
     }
@@ -374,6 +385,7 @@ private fun ChatListNormal(
                                 onEdit(node.currentMessage)
                             },
                             onContext = { contextMessageId = node.currentMessage.id },
+                            onInsertContext = { before -> contextInsertion = if (before) ContextInsertionPosition.Before(node.id) else ContextInsertionPosition.After(node.id) },
                             onFork = {
                                 onForkMessage(node.currentMessage)
                             },

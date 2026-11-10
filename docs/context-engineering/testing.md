@@ -1,14 +1,14 @@
 # 验证记录
 
-`3.1.2-context.3` 的已执行结果，日期：2026-11-10。
+`3.1.2-context.4` 的已执行结果，日期：2026-11-10。
 
 | 检查 | 结果 |
 |---|---|
 | common JVM | 8 通过 |
 | ai JVM | 320 通过 |
-| app JVM | 510 通过 |
-| JVM 合计 | **838 通过**，零失败、错误和跳过 |
-| Android 集成/UI | **18 通过** |
+| app JVM | 513 通过 |
+| JVM 合计 | **841 通过**，零失败、错误和跳过 |
+| Android 集成/UI | **23 通过** |
 | GitHub Debug | arm64-v8a、x86_64、universal APK 与测试 APK 构建成功 |
 | 格式与签名 | Spotless、diff whitespace、APK 签名验证通过 |
 
@@ -27,7 +27,9 @@ Android 测试运行在 API 35 x86_64 模拟器。截图使用应用原生主题
 | `ContextPresetIntegrationTest`（2 项） | 原预填充初始化、普通首发、模板修改隔离、多个 Thinking 的传输、附件 A/B 删除隔离 |
 | `ContextOcrIntegrationTest`（1 项） | 改写 OCR 请求与普通附件缓存隔离 |
 | `Migration_32_33_Test`（1 项） | 旧消息 JSON 保留及新表迁移 |
-| `ContextWorkbenchUiTest`（3 项） | 纯文本新增思考、预填充新增后再改正文、纯思考插入及保存无请求 |
+| `ContextInsertionTest`（JVM） | 任意节点前后、开头/结尾、空会话、选择期间追加历史、切换回复版本和锚点删除 |
+| `ContextConversationPickerIntegrationTest`（1 项） | 75 条真实 Room 数据跨页、助手筛选、标题搜索、排序、排除自身及文件夹内会话 |
+| `ContextWorkbenchUiTest`（7 项） | 编辑和原生预填充、助手/标题筛选排序、目标发起导入、来源发起复制、搜索位置后新建、空会话及保存无请求 |
 
 这些测试与既有上游回归一起执行。工具测试实际运行本地 QuickJS，协议测试使用生产适配器和本地 HTTP 服务。
 

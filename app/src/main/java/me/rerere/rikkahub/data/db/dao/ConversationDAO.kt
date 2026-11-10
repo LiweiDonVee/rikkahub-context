@@ -12,6 +12,29 @@ import me.rerere.rikkahub.data.repository.LightConversationEntity
 
 @Dao
 interface ConversationDAO {
+    @Query("""
+        SELECT id, assistant_id AS assistantId, title, is_pinned AS isPinned,
+               create_at AS createAt, update_at AS updateAt, folder_id AS folderId
+        FROM conversationentity
+        WHERE (:assistantId IS NULL OR assistant_id = :assistantId)
+          AND (:excludeId IS NULL OR id != :excludeId)
+          AND title LIKE :searchPattern ESCAPE '\'
+        ORDER BY
+          CASE WHEN :sort = 'UPDATED_DESC' THEN update_at END DESC,
+          CASE WHEN :sort = 'UPDATED_ASC' THEN update_at END ASC,
+          CASE WHEN :sort = 'CREATED_DESC' THEN create_at END DESC,
+          CASE WHEN :sort = 'CREATED_ASC' THEN create_at END ASC,
+          CASE WHEN :sort = 'TITLE_ASC' THEN title END COLLATE NOCASE ASC,
+          CASE WHEN :sort = 'TITLE_DESC' THEN title END COLLATE NOCASE DESC,
+          id ASC
+    """)
+    fun contextConversations(
+        assistantId: String?,
+        searchPattern: String,
+        sort: String,
+        excludeId: String?
+    ): PagingSource<Int, LightConversationEntity>
+
     @Query("SELECT * FROM conversationentity ORDER BY is_pinned DESC, update_at DESC")
     fun getAll(): Flow<List<ConversationEntity>>
 

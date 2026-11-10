@@ -124,6 +124,7 @@ fun ChatMessage(
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onContext: (() -> Unit)? = null,
+    onInsertContext: ((Boolean) -> Unit)? = null,
 ) {
     val message = node.messages[node.selectIndex]
     if (message.isContextCheckpoint) {
@@ -258,6 +259,7 @@ fun ChatMessage(
             message = message,
             onEdit = onEdit,
             onContext = onContext,
+            onInsertContext = onInsertContext,
             onDelete = onDelete,
             onShare = onShare,
             onFork = onFork,

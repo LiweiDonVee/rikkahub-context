@@ -3,7 +3,7 @@
   <h1>RikkaHub Context Engineering</h1>
   <p><strong>Your context. Your decisions.</strong></p>
   <p>A native Android workspace for user-directed context engineering.</p>
-  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.3">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.4">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
 An independent fork of [RikkaHub](https://github.com/rikkahub/rikkahub) that puts context composition in your hands.
@@ -22,7 +22,7 @@ Edited Thinking is sent through the current provider with its metadata preserved
 | Build an assistant's starting context | Compose user and assistant messages, text and Thinking in the existing preset editor |
 | Select a precise request | Choose messages, order, historical Thinking, Skills, calls and results |
 | Rewrite tool interactions | Edit names, JSON arguments and results; rerun one tool or continue from a saved result |
-| Combine conversations | Copy noncontiguous messages into a chosen position, keep native parts, convert to text, or merge |
+| Combine conversations | Filter by assistant, search and sort conversations, select messages, and create or import context at any position |
 | Compare experiments | Inspect wire bodies, JSON-path differences and each run's archived reply |
 
 ## Native editing
@@ -50,11 +50,11 @@ The input's Save and Preview action enters the same pipeline. Run Tool and Conti
 
 ## Install
 
-Current version: **3.1.2-context.3**. Android 8.0 / API 26 or later.
+Current version: **3.1.2-context.4**. Android 8.0 / API 26 or later.
 
-- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-arm64-v8a-debug.apk).
-- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-universal-debug.apk), with ARM64 and x86_64.
-- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/SHA256SUMS.txt).
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-arm64-v8a-debug.apk).
+- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-universal-debug.apk), with ARM64 and x86_64.
+- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/SHA256SUMS.txt).
 
 The current APKs use Debug signing and package `me.rerere.rikkahub.context.debug`, so they can coexist with official RikkaHub. Configure your own provider, endpoint and model in the existing settings.
 
@@ -75,7 +75,7 @@ pnpm --dir web-ui install --frozen-lockfile
 
 [Build guide](docs/context-engineering/build.md) · [Architecture](docs/context-engineering/architecture.md) · [Verification](docs/context-engineering/testing.md) · [Upstream maintenance](docs/context-engineering/upstream-maintenance.md) · [Contributing](CONTRIBUTING.md)
 
-The context.3 validation includes **838 JVM tests and 18 Android integration/UI tests passing**.
+The context.4 validation includes **841 JVM tests and 23 Android integration/UI tests passing**.
 
 ## Upstream and license
 

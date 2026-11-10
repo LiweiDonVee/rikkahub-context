@@ -24,6 +24,7 @@ import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.ContextConversationSort
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.utils.JsonInstant
 import java.time.Instant
@@ -69,6 +70,14 @@ class ConversationRepository(
 
     suspend fun getTitlesOfAssistant(assistantId: Uuid): Set<String> =
         conversationDAO.getTitlesOfAssistant(assistantId.toString()).toSet()
+
+    fun contextConversations(assistantId: Uuid?, query: String, sort: ContextConversationSort, excludeId: Uuid?): Flow<PagingData<Conversation>> = Pager(
+        config = PagingConfig(pageSize = PAGE_SIZE, initialLoadSize = INITIAL_LOAD_SIZE, enablePlaceholders = false),
+        pagingSourceFactory = {
+            val escaped = query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conversationDAO.contextConversations(assistantId?.toString(), "%$escaped%", sort.name, excludeId?.toString())
+        },
+    ).flow.map { page -> page.map(::conversationSummaryToConversation) }
 
     fun getConversationsOfAssistantPaging(assistantId: Uuid): Flow<PagingData<Conversation>> = Pager(
         config = PagingConfig(

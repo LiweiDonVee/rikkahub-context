@@ -70,6 +70,8 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.ContextInsertionPosition
+import me.rerere.rikkahub.data.model.insertContextNodes
 import me.rerere.rikkahub.data.model.bindConfig
 import me.rerere.rikkahub.data.model.cancelInterruptedTools
 import me.rerere.rikkahub.data.model.deleteMessage
@@ -1370,26 +1372,33 @@ class ChatService(
         }
     }
 
-    suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>) {
-        editContextHistory(conversationId) { conversation ->
-            val index = if (afterMessageId == null) -1 else conversation.messageNodes.indexOfFirst { it.currentMessage.id == afterMessageId }
-            require(afterMessageId == null || index >= 0) { "Insertion position no longer exists" }
-            val inserted = messages.map { message ->
-                if (message.getTools().isEmpty()) message else message.copy(
-                    parts = message.parts.map { if (it is UIMessagePart.Tool && !it.isExecuted) it.copy(approvalState = ToolApprovalState.Pending) else it },
-                    contextState = message.contextState.copy(manualToolExecution = true),
-                )
-            }
-            conversation.copy(messageNodes = conversation.messageNodes.take(index + 1) + inserted.map { MessageNode.of(it) } + conversation.messageNodes.drop(index + 1))
-        }
+    private suspend fun contextPositionAfterMessage(conversationId: Uuid, messageId: Uuid?): ContextInsertionPosition {
+        if (messageId == null) return ContextInsertionPosition.Start
+        val node = getConversation(conversationId)?.getMessageNodeByMessageId(messageId)
+            ?: throw NotFoundException("Insertion position no longer exists")
+        return ContextInsertionPosition.After(node.id)
     }
 
-    suspend fun contextConversations() = settingsStore.awaitLoaded().assistants.flatMap { assistant ->
-        conversationRepo.getConversationsOfAssistant(assistant.id).first()
+    suspend fun insertContextMessages(conversationId: Uuid, afterMessageId: Uuid?, messages: List<UIMessage>): List<Uuid> =
+        insertContextMessages(conversationId, contextPositionAfterMessage(conversationId, afterMessageId), messages)
+
+    suspend fun insertContextMessages(conversationId: Uuid, position: ContextInsertionPosition, messages: List<UIMessage>): List<Uuid> {
+        val nodes = messages.map { message ->
+            val inserted = if (message.getTools().isEmpty()) message else message.copy(
+                parts = message.parts.map { if (it is UIMessagePart.Tool && !it.isExecuted) it.copy(approvalState = ToolApprovalState.Pending) else it },
+                contextState = message.contextState.copy(manualToolExecution = true),
+            )
+            MessageNode.of(inserted)
+        }
+        editContextHistory(conversationId) { it.insertContextNodes(position, nodes) }
+        return nodes.map { it.id }
     }
 
     /** mode: original, text (one per source), merged (one explicit user message). */
-    suspend fun copyContextMessages(sourceId: Uuid, messageIds: Set<Uuid>, targetId: Uuid, afterMessageId: Uuid?, mode: String) {
+    suspend fun copyContextMessages(sourceId: Uuid, messageIds: Set<Uuid>, targetId: Uuid, afterMessageId: Uuid?, mode: String): List<Uuid> =
+        copyContextMessages(sourceId, messageIds, targetId, contextPositionAfterMessage(targetId, afterMessageId), mode)
+
+    suspend fun copyContextMessages(sourceId: Uuid, messageIds: Set<Uuid>, targetId: Uuid, position: ContextInsertionPosition, mode: String): List<Uuid> {
         require(sourceId != targetId) { "Select another conversation as the copy destination" }
         val source = getConversation(sourceId) ?: throw NotFoundException("Source conversation not found")
         getConversation(targetId) ?: throw NotFoundException("Target conversation not found")
@@ -1416,7 +1425,7 @@ class ChatService(
             contextState = me.rerere.ai.context.ContextMessageState(sources = copies.flatMap { it.contextState.sources }),
         )) else copies
         // Historical calls are context data; copying them neither authorizes nor executes a tool.
-        insertContextMessages(targetId, afterMessageId, final)
+        return insertContextMessages(targetId, position, final)
     }
 
     /** Explicit tool-only action. A new attempt is persisted; no model request is made. */

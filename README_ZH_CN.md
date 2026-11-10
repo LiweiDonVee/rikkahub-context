@@ -3,7 +3,7 @@
   <h1>RikkaHub Context Engineering</h1>
   <p><strong>上下文完全由你掌控，下一步由你决定。</strong></p>
   <p>原生 Android 上下文工程工作台</p>
-  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.3">下载 APK</a> · <a href="docs/context-engineering/user-guide.zh-CN.md">使用指南</a> · <a href="README_EN.md">English</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.4">下载 APK</a> · <a href="docs/context-engineering/user-guide.zh-CN.md">使用指南</a> · <a href="README_EN.md">English</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
 基于 [RikkaHub](https://github.com/rikkahub/rikkahub) 的独立 Fork，让你自主组织模型看到的内容，并直接干预交互过程。
@@ -22,7 +22,7 @@
 | 设计助手的初始上下文 | 在原有「预设聊天消息」中组合用户消息、助手正文和 Thinking |
 | 精确选择下一次请求 | 选择消息和顺序，控制历史 Thinking、Skills、工具调用与结果 |
 | 改写工具交互 | 编辑名称、参数和结果；单独重跑一个工具，或从保存的结果继续 |
-| 自由组合不同会话 | 非连续选择消息，指定目标与位置，原样复制、转文字或合并 |
+| 自由组合不同会话 | 按助手筛选、搜索和排序会话，查找并选择消息，在任意位置新建或导入 |
 | 比较上下文实验 | 查看实际请求、JSON 路径差异，以及每轮归档回复 |
 
 ## 原生界面，直接编辑
@@ -38,6 +38,15 @@
   </tr>
 </table>
 
+<table>
+  <tr><th>筛选、搜索和排序会话</th><th>指定位置导入</th><th>任意消息前后插入</th></tr>
+  <tr>
+    <td><img src="docs/images/conversation-picker.png" width="250" alt="按助手筛选并搜索目标会话" /></td>
+    <td><img src="docs/images/context-import.png" width="250" alt="来源与目标插入位置" /></td>
+    <td><img src="docs/images/context-position.png" width="250" alt="按消息摘要查找任意插入位置" /></td>
+  </tr>
+</table>
+
 ## 从编辑到模型请求
 
 1. 打开消息「更多 → 上下文工作台 / Inspector」，或直接选择「编辑」。
@@ -46,15 +55,17 @@
 4. 检查实际 Provider 序列化正文，按需修改消息、系统指令和参数，确认发送。
 5. 在「请求记录」查看来源、排除项、正文及归档回复，比较下一次实验。
 
+聊天顶部菜单的「插入上下文」和消息菜单的「在此之前 / 之后插入上下文」，可直接新建或从其他会话导入。
+
 输入框的「保存并预览」也能直接进入这条流程。工具的「重新执行工具」和「从结果继续」分别控制执行与生成。
 
 ## 安装
 
-当前版本：**3.1.2-context.3**。支持 Android 8.0 / API 26 及以上。
+当前版本：**3.1.2-context.4**。支持 Android 8.0 / API 26 及以上。
 
-- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-arm64-v8a-debug.apk)：普通 ARM64 手机。
-- [通用 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/RikkaHub-Context-3.1.2-context.3-universal-debug.apk)：包含 ARM64 和 x86_64。
-- [版本与更新记录](https://github.com/LiweiDonVee/rikkahub-context/releases) · [校验文件](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.3/SHA256SUMS.txt)
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-arm64-v8a-debug.apk)：普通 ARM64 手机。
+- [通用 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-universal-debug.apk)：包含 ARM64 和 x86_64。
+- [版本与更新记录](https://github.com/LiweiDonVee/rikkahub-context/releases) · [校验文件](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/SHA256SUMS.txt)
 
 本次分发使用 Debug 签名。应用包名为 `me.rerere.rikkahub.context.debug`，可与官方 RikkaHub 并存。安装后在原有设置中配置自己的 Provider、端点和模型；模型、API 和上下文组织方式由你选择。
 
@@ -69,7 +80,7 @@ Thinking 是客户端可访问或由你编写的思考文本。不同协议使�
 - [使用指南](docs/context-engineering/user-guide.zh-CN.md)：七条完整操作流程与原生预填充。
 - [构建指南](docs/context-engineering/build.md)：环境、构建、测试和签名。
 - [架构](docs/context-engineering/architecture.md)：历史、上下文编译、真实请求和回复归档。
-- [验证记录](docs/context-engineering/testing.md)：**838 项 JVM 测试、18 项 Android 集成/UI 测试通过**。
+- [验证记录](docs/context-engineering/testing.md)：**841 项 JVM 测试、23 项 Android 集成/UI 测试通过**。
 - [上游同步](docs/context-engineering/upstream-maintenance.md) · [更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
 ```sh

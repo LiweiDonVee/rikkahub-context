@@ -41,6 +41,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete01
@@ -261,6 +262,7 @@ fun ChatMessageActionsSheet(
     onDelete: () -> Unit,
     onEdit: () -> Unit,
     onContext: (() -> Unit)? = null,
+    onInsertContext: ((Boolean) -> Unit)? = null,
     onShare: () -> Unit,
     onFork: () -> Unit,
     onSelectAndCopy: () -> Unit,
@@ -278,6 +280,10 @@ fun ChatMessageActionsSheet(
             .any { it.text.isNotBlank() }
         val actions = buildList {
             if (onContext != null) add(MessageSheetAction(HugeIcons.WebDesign01, "上下文工作台 / Inspector", onClick = onContext))
+            if (onInsertContext != null) {
+                add(MessageSheetAction(HugeIcons.Add01, "在此之前插入上下文", onClick = { onInsertContext(true) }))
+                add(MessageSheetAction(HugeIcons.Add01, "在此之后插入上下文", onClick = { onInsertContext(false) }))
+            }
             add(MessageSheetAction(HugeIcons.TextSelection, stringResource(R.string.select_and_copy), onClick = onSelectAndCopy))
             if (hasTextContent) {
                 add(MessageSheetAction(HugeIcons.WebDesign01, stringResource(R.string.render_with_webview), onClick = onWebViewPreview))

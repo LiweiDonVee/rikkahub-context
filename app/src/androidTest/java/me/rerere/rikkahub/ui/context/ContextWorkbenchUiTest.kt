@@ -21,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Assistant
@@ -35,6 +36,7 @@ import me.rerere.rikkahub.ui.components.context.ContextTransferPanel
 import me.rerere.rikkahub.ui.components.context.ContextWorkbench
 import me.rerere.rikkahub.ui.components.context.MessagePartsEditor
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPresetMessages
+import me.rerere.rikkahub.ui.pages.chat.ConversationBranchSheet
 import me.rerere.rikkahub.ui.theme.ColorMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -82,6 +84,35 @@ class ContextWorkbenchUiTest {
             }
         } }
     }
+    @Test fun branchSheetShowsBothPathsAndOpensTheSelectedHistory() = runBlocking {
+        settings.awaitLoaded()
+        val question = UIMessage.user("Organize the research notes")
+        val original = UIMessage.assistant("Original research outline")
+        persist(listOf(question, original))
+        val current = service.createConversationBranch(conversationId, question.id)
+        service.insertContextMessages(conversationId, ContextInsertionPosition.End, listOf(UIMessage.user("Collect a second interpretation")))
+        val repository = GlobalContext.get().get<ConversationRepository>()
+        show {
+            val scope = rememberCoroutineScope()
+            val selected by service.getConversationFlow(conversationId).collectAsState()
+            ConversationBranchSheet(
+                conversation = selected,
+                onDismiss = {},
+                loadTree = { repository.getConversationTree(conversationId) },
+                onSelect = { branchId, _ ->
+                    if (branchId != null) scope.launch { service.switchConversationBranch(conversationId, branchId) }
+                },
+            )
+        }
+        val active = instrumentation.targetContext.getString(R.string.chat_branch_tree_active)
+        waitFor { findText(active) != null }
+        assertEquals(question.id, current.currentMessages.single().id)
+        screenshot("context-v5-branch-tree.png")
+        click("Original research outline")
+        waitFor { service.getConversationFlow(conversationId).value.currentMessages.last().id == original.id }
+        assertEquals(listOf(question.id, original.id), repository.getConversationById(conversationId)!!.currentMessages.map { it.id })
+    }
+
     @Test fun textOnlyHistoryCanGainItsFirstThoughtWithoutDispatchAndUseNativeWorkbenchTabs() = runBlocking {
         settings.awaitLoaded()
         val message = UIMessage.assistant("A reply that originally had no thinking")

@@ -42,6 +42,18 @@ interface MessageNodeDAO {
     suspend fun deleteById(nodeId: String)
 
     // 消息节点数（重新生成的分支不另算）
+    @Query("SELECT id FROM message_node WHERE conversation_id = :conversationId")
+    suspend fun getIds(conversationId: String): List<String>
+
+    @Query("SELECT * FROM message_node WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<MessageNodeEntity>
+
+    @Query("UPDATE message_node SET node_index = :position WHERE id = :id")
+    suspend fun updatePosition(id: String, position: Int)
+
+    @Query("DELETE FROM message_node WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
     @Query("SELECT COUNT(*) FROM message_node")
     suspend fun countAll(): Int
 }

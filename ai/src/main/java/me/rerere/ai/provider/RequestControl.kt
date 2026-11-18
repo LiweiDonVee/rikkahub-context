@@ -21,7 +21,7 @@ fun interface RequestControl {
 suspend fun TextGenerationParams.prepareRequest(protocol: String, endpoint: String, body: JsonObject): String {
     val serialized = json.encodeToString(body)
     val result = requestControl?.prepare(protocol, endpoint, serialized) ?: return serialized
-    validateRequestEdit(serialized, result)
+    if (serialized != result) validateRequestEdit(serialized, result)
     // Preserve the exact reviewed bytes. Do not parse and re-serialize after confirmation.
     return result
 }

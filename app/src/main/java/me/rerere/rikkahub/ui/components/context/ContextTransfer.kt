@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -20,9 +21,11 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.*
 import me.rerere.rikkahub.data.model.*
+import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.components.ui.*
+import me.rerere.rikkahub.ui.pages.chat.ConversationBranchSheet
 import me.rerere.rikkahub.ui.context.LocalSettings
 import org.koin.compose.koinInject
 import java.time.ZoneId
@@ -184,6 +187,7 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
     initialPosition: ContextInsertionPosition = ContextInsertionPosition.End, enabled: Boolean = true,
     onPositionChange: (ContextInsertionPosition) -> Unit = {}, onDone: (Uuid, List<Uuid>) -> Unit) {
     val service: ChatService = koinInject()
+    val repository: ConversationRepository = koinInject()
     val scope = rememberCoroutineScope()
     var chosenSource by remember { mutableStateOf<Conversation?>(null) }
     var chosenTarget by remember { mutableStateOf<Conversation?>(null) }
@@ -191,6 +195,7 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
     val target = fixedTarget ?: chosenTarget
     var selected by remember(fixedSource?.id) { mutableStateOf(setOfNotNull(initialMessageId)) }
     var position by remember(fixedTarget?.id) { mutableStateOf(initialPosition) }
+    var sourceBranchId by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf<String?>(null) }
     var mode by remember { mutableStateOf("original") }
     var modeMenu by remember { mutableStateOf(false) }
@@ -202,7 +207,7 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
             working = true; error = null
             try {
                 val full = service.getConversation(conversation.id) ?: error("会话已删除")
-                if (isSource) { chosenSource = full; selected = emptySet(); picker = "messages" }
+                if (isSource) { chosenSource = full; sourceBranchId = null; selected = emptySet(); picker = "messages" }
                 else { chosenTarget = full; position = ContextInsertionPosition.End }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message }
             finally { working = false }
@@ -212,6 +217,12 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
         CardGroup {
             if (fixedSource == null) item(onClick = { picker = "source" }, leadingContent = { CardGroupIcon(HugeIcons.Search01) }, overlineContent = { Text("来源会话") }, headlineContent = { Text(source?.title?.ifBlank { "未命名会话" } ?: "查找来源会话") }, trailingContent = { Icon(HugeIcons.ArrowRight01, null) })
             item(onClick = { if (source != null) picker = "messages" }, leadingContent = { CardGroupIcon(HugeIcons.Message01) }, headlineContent = { Text("选择消息") }, supportingContent = { Text("已选 ${selected.size} 条 · 支持搜索和非连续选择") }, trailingContent = { Icon(HugeIcons.ArrowRight01, null) })
+            if (fixedSource == null && source != null) item(
+                onClick = { picker = "branches" },
+                leadingContent = { CardGroupIcon(HugeIcons.GitFork) },
+                headlineContent = { Text(stringResource(R.string.chat_branch_tree_source)) },
+                trailingContent = { Icon(HugeIcons.ArrowRight01, null) },
+            )
             if (fixedTarget == null) item(onClick = { picker = "target" }, leadingContent = { CardGroupIcon(HugeIcons.Search01) }, overlineContent = { Text("目标会话") }, headlineContent = { Text(target?.title?.ifBlank { "未命名会话" } ?: "查找目标会话") }, trailingContent = { Icon(HugeIcons.ArrowRight01, null) })
             item(onClick = { if (target != null) picker = "position" }, leadingContent = { CardGroupIcon(HugeIcons.Add01) }, overlineContent = { Text("插入位置") }, headlineContent = { Text(target?.let { positionLabel(it, position) } ?: "先选择目标会话", maxLines = 3, overflow = TextOverflow.Ellipsis) }, trailingContent = { Icon(HugeIcons.ArrowRight01, null) })
         }
@@ -224,7 +235,7 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
         Button(enabled = enabled && !working && source != null && target != null && selected.isNotEmpty(), onClick = {
             scope.launch {
                 working = true; error = null
-                try { val nodes = service.copyContextMessages(source!!.id, selected, target!!.id, position, mode); onDone(target.id, nodes) }
+                try { val nodes = service.copyContextMessages(source!!.id, selected, target!!.id, position, mode, sourceBranchId); onDone(target.id, nodes) }
                 catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "导入失败" }
                 finally { working = false }
             }
@@ -233,6 +244,34 @@ fun ContextTransferPanel(fixedSource: Conversation? = null, fixedTarget: Convers
     when (picker) {
         "source" -> fixedTarget?.let { ContextConversationPicker("选择来源会话", it.id, { picker = null }) { chosen -> load(chosen, true) } }
         "target" -> source?.let { ContextConversationPicker("选择目标会话", it.id, { picker = null }) { chosen -> load(chosen, false) } }
+        "branches" -> source?.let { selectedSource ->
+            ConversationBranchSheet(
+                conversation = selectedSource,
+                title = stringResource(R.string.chat_branch_tree_source),
+                onDismiss = { picker = null },
+                loadTree = { repository.getConversationTree(selectedSource.id) },
+                onSelect = { branchId, _ ->
+                    picker = null
+                    scope.launch {
+                        working = true
+                        error = null
+                        try {
+                            chosenSource = if (branchId == null) selectedSource else
+                                checkNotNull(repository.getBranchConversation(selectedSource.id, branchId))
+                            sourceBranchId = branchId
+                            selected = emptySet()
+                            picker = "messages"
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            error = e.message
+                        } finally {
+                            working = false
+                        }
+                    }
+                },
+            )
+        }
         "messages" -> source?.let { ContextMessagePicker(it, selected, { picker = null }) { ids -> selected = ids; picker = null } }
         "position" -> target?.let { ContextPositionPicker(it, { picker = null }) { picked -> position = picked; onPositionChange(picked); picker = null } }
     }

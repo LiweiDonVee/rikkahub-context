@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 33,
-    "identityHash": "53a582eb7bfddfaa41dabb44b3af6b40",
+    "identityHash": "4f4fdab22c6285532d14f7736323b104",
     "entities": [
       {
         "tableName": "ConversationEntity",
@@ -280,13 +280,14 @@
         },
         "indices": [
           {
-            "name": "index_message_node_conversation_id",
+            "name": "index_message_node_conversation_id_node_index",
             "unique": false,
             "columnNames": [
-              "conversation_id"
+              "conversation_id",
+              "node_index"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_node_conversation_id` ON `${TABLE_NAME}` (`conversation_id`)"
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_node_conversation_id_node_index` ON `${TABLE_NAME}` (`conversation_id`, `node_index`)"
           }
         ],
         "foreignKeys": [
@@ -1018,288 +1019,11 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_usage_record_created_at` ON `${TABLE_NAME}` (`created_at`)"
           }
         ]
-      },
-      {
-        "tableName": "context_request",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `conversation_id` TEXT NOT NULL, `run_id` TEXT NOT NULL, `response_message_id` TEXT NOT NULL, `protocol` TEXT NOT NULL, `endpoint` TEXT NOT NULL, `model` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `selection` TEXT NOT NULL, `sources` TEXT NOT NULL, `exclusions` TEXT NOT NULL, `raw_edited` INTEGER NOT NULL, `redacted_paths` TEXT NOT NULL, `body_sha256` TEXT NOT NULL, `transport_status` TEXT NOT NULL, `generation_status` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `response_code` INTEGER, `failure_type` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`conversation_id`) REFERENCES `ConversationEntity`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
-        "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "conversationId",
-            "columnName": "conversation_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "runId",
-            "columnName": "run_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "responseMessageId",
-            "columnName": "response_message_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "protocol",
-            "columnName": "protocol",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "endpoint",
-            "columnName": "endpoint",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "model",
-            "columnName": "model",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "createdAt",
-            "columnName": "created_at",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "selection",
-            "columnName": "selection",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "sources",
-            "columnName": "sources",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "exclusions",
-            "columnName": "exclusions",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "rawEdited",
-            "columnName": "raw_edited",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "redactedPaths",
-            "columnName": "redacted_paths",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "bodySha256",
-            "columnName": "body_sha256",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "transportStatus",
-            "columnName": "transport_status",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "generationStatus",
-            "columnName": "generation_status",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "attempts",
-            "columnName": "attempts",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "responseCode",
-            "columnName": "response_code",
-            "affinity": "INTEGER"
-          },
-          {
-            "fieldPath": "failureType",
-            "columnName": "failure_type",
-            "affinity": "TEXT"
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "id"
-          ]
-        },
-        "indices": [
-          {
-            "name": "index_context_request_conversation_id",
-            "unique": false,
-            "columnNames": [
-              "conversation_id"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_request_conversation_id` ON `${TABLE_NAME}` (`conversation_id`)"
-          },
-          {
-            "name": "index_context_request_response_message_id",
-            "unique": false,
-            "columnNames": [
-              "response_message_id"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_request_response_message_id` ON `${TABLE_NAME}` (`response_message_id`)"
-          },
-          {
-            "name": "index_context_request_run_id",
-            "unique": false,
-            "columnNames": [
-              "run_id"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_request_run_id` ON `${TABLE_NAME}` (`run_id`)"
-          }
-        ],
-        "foreignKeys": [
-          {
-            "table": "ConversationEntity",
-            "onDelete": "CASCADE",
-            "onUpdate": "NO ACTION",
-            "columns": [
-              "conversation_id"
-            ],
-            "referencedColumns": [
-              "id"
-            ]
-          }
-        ]
-      },
-      {
-        "tableName": "context_request_body",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`request_id` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `content` TEXT NOT NULL, PRIMARY KEY(`request_id`, `chunk_index`), FOREIGN KEY(`request_id`) REFERENCES `context_request`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
-        "fields": [
-          {
-            "fieldPath": "requestId",
-            "columnName": "request_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "chunkIndex",
-            "columnName": "chunk_index",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "content",
-            "columnName": "content",
-            "affinity": "TEXT",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "request_id",
-            "chunk_index"
-          ]
-        },
-        "foreignKeys": [
-          {
-            "table": "context_request",
-            "onDelete": "CASCADE",
-            "onUpdate": "NO ACTION",
-            "columns": [
-              "request_id"
-            ],
-            "referencedColumns": [
-              "id"
-            ]
-          }
-        ]
-      },
-      {
-        "tableName": "context_response_body",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`run_id` TEXT NOT NULL, `conversation_id` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `content` TEXT NOT NULL, `file_urls` TEXT NOT NULL, PRIMARY KEY(`run_id`, `chunk_index`), FOREIGN KEY(`conversation_id`) REFERENCES `ConversationEntity`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
-        "fields": [
-          {
-            "fieldPath": "runId",
-            "columnName": "run_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "conversationId",
-            "columnName": "conversation_id",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "chunkIndex",
-            "columnName": "chunk_index",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "content",
-            "columnName": "content",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "fileUrls",
-            "columnName": "file_urls",
-            "affinity": "TEXT",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "run_id",
-            "chunk_index"
-          ]
-        },
-        "indices": [
-          {
-            "name": "index_context_response_body_conversation_id",
-            "unique": false,
-            "columnNames": [
-              "conversation_id"
-            ],
-            "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_context_response_body_conversation_id` ON `${TABLE_NAME}` (`conversation_id`)"
-          }
-        ],
-        "foreignKeys": [
-          {
-            "table": "ConversationEntity",
-            "onDelete": "CASCADE",
-            "onUpdate": "NO ACTION",
-            "columns": [
-              "conversation_id"
-            ],
-            "referencedColumns": [
-              "id"
-            ]
-          }
-        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '53a582eb7bfddfaa41dabb44b3af6b40')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4f4fdab22c6285532d14f7736323b104')"
     ]
   }
 }

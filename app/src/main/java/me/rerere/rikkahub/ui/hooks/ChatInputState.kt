@@ -35,8 +35,15 @@ class ChatInputState {
         textContent.setTextAndPlaceCursorAtEnd(text)
     }
 
+    // 追加到已有文本之后；已有内容且不以换行结尾时自动补一个换行
     fun appendText(content: String) {
-        textContent.setTextAndPlaceCursorAtEnd(textContent.text.toString() + content)
+        val current = textContent.text.toString()
+        val text = when {
+            current.isBlank() -> content
+            current.endsWith('\n') -> current + content
+            else -> current + "\n" + content
+        }
+        textContent.setTextAndPlaceCursorAtEnd(text)
     }
 
     fun setContents(contents: List<UIMessagePart>) {
@@ -49,7 +56,8 @@ class ChatInputState {
         textContent.setTextAndPlaceCursorAtEnd(text)
         val reasoning = contents.editableReasoningOrNull()
         editingReasoning = reasoning?.let { TextFieldState(it.reasoning) }
-        messageContent = contents.filter { it !is UIMessagePart.Text && (reasoning == null || it !is UIMessagePart.Reasoning) }
+        messageContent =
+            contents.filter { it !is UIMessagePart.Text && (reasoning == null || it !is UIMessagePart.Reasoning) }
         editingParts = contents
         editingAttachmentUrls = contents.mapNotNull { it.attachmentUrlOrNull() }.toSet()
     }

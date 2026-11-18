@@ -13,7 +13,7 @@ plugins {
 
 spotless {
     // 只格式化相对共享上游基线有改动的文件，避免一次性重排整个仓库
-    ratchetFrom("9bc0fd65873c77b42e2743c9c7dba4d4594a6478")
+    ratchetFrom("41d77f1eda64597758b19414a55d57c3f912941b")
 
     // Spotless 只从 .editorconfig 读标准属性，ktlint 的风格和规则开关得写在这里
     val ktlintVersion = libs.versions.ktlint.get()

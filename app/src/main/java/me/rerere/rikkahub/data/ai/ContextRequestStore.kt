@@ -115,7 +115,10 @@ class ContextRequestStore(val dao: ContextRequestDAO) {
         override suspend fun prepare(protocol: String, endpoint: String, serializedBody: String): String {
             val delivery = inspectReasoningDelivery(messages, protocol, serializedBody)
             val finalBody = gate?.review(protocol, endpoint, serializedBody, reviewPurpose, delivery.notices) ?: serializedBody
-            validateRequestEdit(serializedBody, finalBody)
+            val edited = serializedBody != finalBody
+            if (edited) validateRequestEdit(serializedBody, finalBody)
+            val omissions = if (edited) inspectReasoningDelivery(messages, protocol, finalBody).omissions else delivery.omissions
+            val digest = sha256(finalBody)
             val sentModel = if (protocol == "google_generate_content") model else {
                 ((JsonInstant.parseToJsonElement(finalBody) as? JsonObject)?.get("model") as? JsonPrimitive)?.contentOrNull ?: model
             }
@@ -158,14 +161,14 @@ class ContextRequestStore(val dao: ContextRequestDAO) {
                             }
                         }
                     }),
-                    exclusions = JsonInstant.encodeToString(exclusions + inspectReasoningDelivery(messages, protocol, finalBody).omissions),
-                    rawEdited = serializedBody != finalBody,
+                    exclusions = JsonInstant.encodeToString(exclusions + omissions),
+                    rawEdited = edited,
                     redactedPaths = JsonInstant.encodeToString(safe.redactedPaths),
-                    bodySha256 = sha256(finalBody),
+                    bodySha256 = digest,
                 ),
                 safe.body,
             )
-            current.set(id to sha256(finalBody))
+            current.set(id to digest)
             return finalBody
         }
 

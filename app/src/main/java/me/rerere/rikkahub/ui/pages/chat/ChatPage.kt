@@ -65,6 +65,7 @@ import me.rerere.ui.toast.ToastType
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -78,6 +79,7 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.hugeicons.stroke.MoreVertical
+import me.rerere.hugeicons.stroke.GitFork
 import me.rerere.hugeicons.stroke.Share04
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
@@ -86,9 +88,11 @@ import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.BackgroundShellStatus
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.SessionActivity
 import me.rerere.rikkahub.ui.components.ai.BackgroundTasksSheet
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
@@ -201,16 +205,25 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     }
 
     val chatListState = rememberLazyListState()
-    LaunchedEffect(nodeId, conversation.messageNodes.size) {
-        if (!vm.chatListInitialized && conversation.messageNodes.isNotEmpty()) {
-            if (nodeId != null) {
-                val index = conversation.messageNodes.indexOfFirst { it.id == nodeId }
-                if (index >= 0) {
-                    chatListState.scrollToItem(index)
-                }
-            } else {
-                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+    val toaster = LocalToaster.current
+    val branchError = stringResource(R.string.chat_branch_tree_error)
+    LaunchedEffect(nodeId, conversation.id) {
+        if (nodeId != null && !vm.chatListInitialized) {
+            try {
+                val selected = vm.revealBranchNode(nodeId)
+                val index = selected.messageNodes.indexOfFirst { it.id == nodeId }
+                if (index >= 0) chatListState.requestScrollToItem(index)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toaster.show(e.message ?: branchError, type = ToastType.Error)
             }
+            vm.chatListInitialized = true
+        }
+    }
+    LaunchedEffect(nodeId, conversation.messageNodes.size) {
+        if (nodeId == null && !vm.chatListInitialized && conversation.messageNodes.isNotEmpty()) {
+            chatListState.requestScrollToItem(conversation.messageNodes.size + 5)
             vm.chatListInitialized = true
         }
     }
@@ -335,8 +348,53 @@ private fun ChatPageContent(
         )
     }
     val workspaceRepository: WorkspaceRepository = koinInject()
+    val sessionActivity by vm.sessionActivity.collectAsStateWithLifecycle()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
+    var showBranchTree by rememberSaveable { mutableStateOf(false) }
+    var changingBranch by remember { mutableStateOf(false) }
+    val repository: ConversationRepository = koinInject()
+    val branchError = stringResource(R.string.chat_branch_tree_error)
+    val branchCreated = stringResource(R.string.chat_branch_tree_created)
+    fun changeBranch(targetNode: Uuid?, open: suspend () -> Conversation) {
+        if (changingBranch) return
+        changingBranch = true
+        scope.launch {
+            try {
+                val selected = open()
+                showBranchTree = false
+                previewMode = false
+                val index = if (targetNode == null) selected.messageNodes.lastIndex else
+                    selected.messageNodes.indexOfFirst { it.id == targetNode }
+                chatListState.requestScrollToItem(index.coerceAtLeast(0))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toaster.show(e.message ?: branchError, type = ToastType.Error)
+            } finally {
+                changingBranch = false
+            }
+        }
+    }
+    if (showBranchTree) {
+        ConversationBranchSheet(
+            conversation = conversation,
+            onDismiss = { showBranchTree = false },
+            loadTree = { repository.getConversationTree(conversation.id) },
+            onSelect = { branchId, nodeId ->
+                changeBranch(nodeId) {
+                    if (branchId == null) contextConversation
+                    else contextService.switchConversationBranch(conversation.id, branchId)
+                }
+            },
+            onSelectVersion = { nodeId, index ->
+                changeBranch(nodeId) {
+                    contextService.selectMessageNode(conversation.id, nodeId, index)
+                    contextService.getConversation(conversation.id) ?: contextConversation
+                }
+            },
+        )
+    }
     val selectionState = rememberChatSelectionState()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     val hazeState = rememberHazeState()
@@ -380,7 +438,10 @@ private fun ChatPageContent(
         color = MaterialTheme.colorScheme.background,
         modifier = Modifier.fillMaxSize()
     ) {
-        AssistantBackground(setting = setting, modifier = Modifier.hazeSource(hazeState))
+        AssistantBackground(
+            setting = setting,
+            modifier = if (setting.displaySetting.enableBlurEffect) Modifier.hazeSource(hazeState) else Modifier,
+        )
         Scaffold(
             topBar = {
                 TopBar(
@@ -400,6 +461,7 @@ private fun ChatPageContent(
                         selectionState.selecting = false
                         previewMode = true
                     },
+                    onShowBranchTree = { showBranchTree = true },
                     onExport = {
                         // 跟消息上的分享一样进入多选，默认全选，用户可以再挑
                         previewMode = false
@@ -506,6 +568,7 @@ private fun ChatPageContent(
                 previewListState = previewListState,
                 selectionState = selectionState,
                 loading = loadingJob != null,
+                compressing = sessionActivity == SessionActivity.Compressing,
                 processingStatus = processingStatus,
                 previewMode = previewMode,
                 onPreviewModeChange = { previewMode = it },
@@ -521,9 +584,8 @@ private fun ChatPageContent(
                     editingContextMessage = it
                 },
                 onForkMessage = {
-                    scope.launch {
-                        val fork = vm.forkMessage(message = it)
-                        navigateToChatPage(navController, chatId = fork.id)
+                    changeBranch(null) {
+                        vm.forkMessage(message = it).also { toaster.show(branchCreated, type = ToastType.Success) }
                     }
                 },
                 onDelete = {
@@ -546,6 +608,7 @@ private fun ChatPageContent(
                 onClearTranslation = { message ->
                     vm.clearTranslationField(message.id)
                 },
+                onShowBranchTree = { showBranchTree = true },
                 onJumpToMessage = { index ->
                     previewMode = false
                     scope.launch {
@@ -684,6 +747,7 @@ private fun TopBar(
     onNewChat: () -> Unit,
     onInsertContext: () -> Unit,
     onShowOverview: () -> Unit,
+    onShowBranchTree: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
     onUpdateTitle: (String) -> Unit
@@ -766,6 +830,7 @@ private fun TopBar(
                     enabled = conversation.messageNodes.isNotEmpty(),
                     onInsertContext = onInsertContext,
                     onShowOverview = onShowOverview,
+                    onShowBranchTree = onShowBranchTree,
                     onExport = onExport,
                     onDelete = onDelete,
                 )
@@ -816,6 +881,7 @@ private fun ChatPageMenu(
     enabled: Boolean,
     onInsertContext: () -> Unit,
     onShowOverview: () -> Unit,
+    onShowBranchTree: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -858,19 +924,27 @@ private fun ChatPageMenu(
             onDismissRequest = { expanded = false },
         ) {
             DropdownMenuGroup(shapes = MenuDefaults.groupShape(index = 0, count = 2)) {
-                MenuItem(text = "插入上下文", icon = HugeIcons.MessageAdd01, index = 0, count = 3, itemEnabled = true, onClick = onInsertContext)
+                MenuItem(text = "插入上下文", icon = HugeIcons.MessageAdd01, index = 0, count = 4, itemEnabled = true, onClick = onInsertContext)
                 MenuItem(
                     text = stringResource(R.string.chat_page_conversation_map),
                     icon = HugeIcons.LeftToRightListBullet,
                     index = 1,
-                    count = 3,
+                    count = 4,
                     onClick = onShowOverview,
+                )
+                MenuItem(
+                    text = stringResource(R.string.chat_branch_tree_title),
+                    icon = HugeIcons.GitFork,
+                    index = 2,
+                    count = 4,
+                    itemEnabled = true,
+                    onClick = onShowBranchTree,
                 )
                 MenuItem(
                     text = stringResource(R.string.export_title),
                     icon = HugeIcons.Share04,
-                    index = 2,
-                    count = 3,
+                    index = 3,
+                    count = 4,
                     onClick = onExport,
                 )
             }

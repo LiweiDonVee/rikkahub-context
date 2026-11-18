@@ -1,6 +1,6 @@
 # 维护与上游同步
 
-公开 Fork：[LiweiDonVee/rikkahub-context](https://github.com/LiweiDonVee/rikkahub-context)。维护分支为 `main`；上游为 [rikkahub/rikkahub](https://github.com/rikkahub/rikkahub)，当前共享基线 `9bc0fd65873c77b42e2743c9c7dba4d4594a6478`。
+公开 Fork：[LiweiDonVee/rikkahub-context](https://github.com/LiweiDonVee/rikkahub-context)。维护分支为 `main`；上游为 [rikkahub/rikkahub](https://github.com/rikkahub/rikkahub)，当前共享基线 `41d77f1eda64597758b19414a55d57c3f912941b`。
 
 ## 同步
 
@@ -22,10 +22,10 @@ git merge upstream/master
 - `UIMessage` / `ContextPartDraft`：新增部件和重排保留来源身份，恢复与排除正确映射，旧编辑标记读取为当前人工文本。
 - `ConversationSession`：所有加载中会话的写入仍经过 Session/ChatService。
 - 原生预填充：保持 `presetMessages → newConversation → updateCurrentMessages`、ID/时间和字面内容；只为本地文件建立独立会话所有权。
-- Room schema 33：请求/回复分块表、run 关联、迁移和级联删除。
+- Room schema 35 同时接收旧 Fork 33 和上游 33/34。保留请求归档，添加分支表和上游消息索引、工作区挂载字段。
 - 附件：可见内容、原件、工具记录和回复归档的引用参与生命周期。
 
-同步后优先复验确认字节、历史工具不执行、当前授权、并行工具结果、预填充初始化、附件归属和 Room 迁移。
+同步后优先复验确认字节、历史工具不执行、当前授权、并行工具结果、预填充初始化、分支和附件归属、DeepSeek 重复导入与 Room 迁移。
 
 ## 发布
 

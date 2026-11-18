@@ -12,6 +12,8 @@ class FilesRepository(
         return file.copy(id = id)
     }
 
+    suspend fun insertMissing(file: ManagedFileEntity): Boolean = dao.insertMissing(file) != -1L
+
     suspend fun update(file: ManagedFileEntity) {
         dao.update(file)
     }

@@ -6,13 +6,15 @@
 
 編輯、選擇、執行與繼續各自獨立，由你調度。歷史訊息、新插入訊息及助手預填充共用完整內容編輯器，支援新增思考、刪除、排序、復原與全文編輯。
 
+在聊天的「分支樹」中切換路徑和回覆版本。使用「備份與還原 → 匯入匯出 → DeepSeek」，可把匯出 ZIP 的所有分支、推理和可用附件增量匯入同一個「DeepSeek 聊天記錄」助理。
+
 ## 下載與文件
 
-- [下載 3.1.2-context.4 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.4)：Android 8.0 / API 26 以上，提供 ARM64 與通用版本，使用 Debug 簽章。
+- [下載 3.3.0-context.5 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.3.0-context.5)：Android 8.0 / API 26 以上，提供 ARM64 與通用版本，使用 Debug 簽章。
 - [完整介紹（簡體中文）](README.md) · [English](README_EN.md)
 - [使用指南（簡體中文）](docs/context-engineering/user-guide.zh-CN.md)
 - [建置指南](docs/context-engineering/build.md) · [Provider 說明](docs/context-engineering/provider-compatibility.md)
-- [驗證記錄](docs/context-engineering/testing.md)：841 項 JVM、23 項 Android 整合/UI 測試通過。
+- [驗證記錄](docs/context-engineering/testing.md)：涵蓋匯入、分支、增量儲存、預填與請求傳輸。
 - [更新記錄](CHANGELOG.md) · [問題回報](https://github.com/LiweiDonVee/rikkahub-context/issues)
 
 獨立套件可與官方 RikkaHub 並存；沿用原有助手預設聊天訊息與新對話初始化機制，保留角色、順序及未修改內容。

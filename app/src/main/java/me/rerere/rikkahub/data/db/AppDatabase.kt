@@ -7,6 +7,7 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import me.rerere.ai.core.TokenUsage
 import me.rerere.rikkahub.data.db.dao.ContextRequestDAO
+import me.rerere.rikkahub.data.db.dao.ConversationBranchDAO
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.FolderDAO
@@ -22,7 +23,9 @@ import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.ContextRequestBodyEntity
 import me.rerere.rikkahub.data.db.entity.ContextRequestEntity
 import me.rerere.rikkahub.data.db.entity.ContextResponseBodyEntity
+import me.rerere.rikkahub.data.db.entity.ConversationBranchEntity
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
+import me.rerere.rikkahub.data.db.entity.ConversationPathEntity
 import me.rerere.rikkahub.data.db.entity.FavoriteEntity
 import me.rerere.rikkahub.data.db.entity.FolderEntity
 import me.rerere.rikkahub.data.db.entity.GenMediaEntity
@@ -45,6 +48,8 @@ import me.rerere.rikkahub.utils.JsonInstant
 @Database(
     entities = [
         ConversationEntity::class,
+        ConversationBranchEntity::class,
+        ConversationPathEntity::class,
         MemoryFileEntity::class,
         MemoryConsolidationEntity::class,
         GenMediaEntity::class,
@@ -62,7 +67,7 @@ import me.rerere.rikkahub.utils.JsonInstant
         ContextRequestBodyEntity::class,
         ContextResponseBodyEntity::class,
     ],
-    version = 33,
+    version = 35,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -88,7 +93,7 @@ import me.rerere.rikkahub.utils.JsonInstant
         AutoMigration(from = 28, to = 29, spec = Migration_28_29::class),
         AutoMigration(from = 29, to = 30),
         AutoMigration(from = 31, to = 32),
-        AutoMigration(from = 32, to = 33),
+        AutoMigration(from = 33, to = 34),
     ]
 )
 @TypeConverters(TokenUsageConverter::class)
@@ -102,6 +107,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun genMediaDao(): GenMediaDAO
 
+    abstract fun conversationBranchDao(): ConversationBranchDAO
     abstract fun messageNodeDao(): MessageNodeDAO
 
     abstract fun managedFileDao(): ManagedFileDAO

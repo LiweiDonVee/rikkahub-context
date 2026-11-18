@@ -9,6 +9,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.MessageNode
 import java.time.Instant
 
 data class MessageSearchResult(
@@ -100,16 +101,7 @@ class MessageFtsManager(private val database: AppDatabase) {
                 val existing = indexed.remove(message.id.toString())
                 if (existing != null && existing.nodeId == nodeId && existing.text == text) return@forEach
                 existing?.let { stale.add(it.rowid) }
-                if (text.isNotBlank()) {
-                    db.execSQL(
-                        "INSERT INTO message_fts(text, node_id, message_id, conversation_id) VALUES (?, ?, ?, ?)",
-                        arrayOf(text, nodeId, message.id.toString(), conversationId)
-                    )
-                    db.execSQL(
-                        "INSERT OR REPLACE INTO message_fts_rowid(fts_rowid, conversation_id) VALUES (last_insert_rowid(), ?)",
-                        arrayOf(conversationId)
-                    )
-                }
+                insertMessage(conversationId, nodeId, message.id.toString(), text)
             }
         }
         indexed.values.forEach { stale.add(it.rowid) }
@@ -117,6 +109,53 @@ class MessageFtsManager(private val database: AppDatabase) {
             db.execSQL("DELETE FROM message_fts WHERE rowid = ?", arrayOf(rowid))
             db.execSQL("DELETE FROM message_fts_rowid WHERE fts_rowid = ?", arrayOf(rowid))
         }
+    }
+
+    // A normal append does not scan the existing FTS rows or extract historical text again.
+    suspend fun appendNodes(conversationId: String, nodes: List<MessageNode>) = database.withTransaction {
+        nodes.forEach { node ->
+            node.messages.forEach { message ->
+                insertMessage(conversationId, node.id.toString(), message.id.toString(), message.extractFtsText())
+            }
+        }
+    }
+
+    suspend fun replaceNodes(
+        conversationId: String,
+        removedOrChanged: Collection<String>,
+        nodes: List<MessageNode>,
+    ) = database.withTransaction {
+        // Capture affected rowids before deleting from the virtual table.
+        if (removedOrChanged.isNotEmpty()) {
+            val changed = removedOrChanged.toHashSet()
+            val stale = mutableListOf<Long>()
+            db.query(
+                "SELECT f.rowid, f.node_id FROM message_fts_rowid AS r " +
+                    "JOIN message_fts AS f ON f.rowid = r.fts_rowid WHERE r.conversation_id = ?",
+                arrayOf(conversationId)
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(1) in changed) stale.add(cursor.getLong(0))
+                }
+            }
+            stale.forEach { rowid ->
+                db.execSQL("DELETE FROM message_fts WHERE rowid = ?", arrayOf(rowid))
+                db.execSQL("DELETE FROM message_fts_rowid WHERE fts_rowid = ?", arrayOf(rowid))
+            }
+        }
+        appendNodes(conversationId, nodes)
+    }
+
+    private fun insertMessage(conversationId: String, nodeId: String, messageId: String, text: String) {
+        if (text.isBlank()) return
+        db.execSQL(
+            "INSERT INTO message_fts(text, node_id, message_id, conversation_id) VALUES (?, ?, ?, ?)",
+            arrayOf(text, nodeId, messageId, conversationId)
+        )
+        db.execSQL(
+            "INSERT OR REPLACE INTO message_fts_rowid(fts_rowid, conversation_id) VALUES (last_insert_rowid(), ?)",
+            arrayOf(conversationId)
+        )
     }
 
     suspend fun deleteConversation(conversationId: String) = database.withTransaction {

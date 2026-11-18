@@ -31,6 +31,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import kotlin.time.Duration.Companion.days
 
 class AgentLoopTest {
     private val model = Model(modelId = "test-model")
@@ -86,6 +87,44 @@ class AgentLoopTest {
         // 第一步还没有内容的助手消息不能发给模型
         assertEquals(listOf(MessageRole.USER), hooks.prepared.single().map { it.role })
         assertEquals(setOf(finished.message.id), events.messageIds())
+    }
+
+    @Test
+    fun `throttled previews keep all chunks in the final response`() = runTest {
+        fun fixture() = provider.stream {
+            emit(StreamChunk.TextStart("burst"))
+            repeat(1_000) { emit(StreamChunk.TextDelta("burst", "x")) }
+            emit(StreamChunk.TextEnd("burst"))
+            finish()
+        }
+        fixture()
+        val before = runToEnd().filterIsInstance<AgentEvent.MessageUpdated>()
+        fixture()
+        val after = runToEnd(request().copy(previewInterval = 1.days))
+        assertEquals(1_004, before.size)
+        assertEquals(2, after.filterIsInstance<AgentEvent.MessageUpdated>().size)
+        assertEquals("x".repeat(1_000), after.finished().message.toText())
+    }
+
+    @Test
+    fun `cancelled stream retains chunks received after the most recent preview`() = runTest {
+        val received = CompletableDeferred<Unit>()
+        val interrupted = CompletableDeferred<UIMessage>()
+        provider.stream {
+            text("shown")
+            text(" and retained")
+            received.complete(Unit)
+            awaitCancellation()
+        }
+        val capture = object : AgentHooks by hooks {
+            override suspend fun interruptedPreview(message: UIMessage) {
+                interrupted.complete(message)
+            }
+        }
+        val job = launch { runToEnd(request().copy(previewInterval = 1.days), capture) }
+        received.await()
+        job.cancelAndJoin()
+        assertEquals("shown\n and retained", interrupted.await().toText())
     }
 
     @Test
@@ -354,6 +393,43 @@ class AgentLoopTest {
 
         assertEquals(2, runs)
         assertTrue(message.getTools().all { it.isExecuted })
+    }
+
+    @Test
+    fun `pausing after tools ends the run before the next request and a rerun continues`() = runTest {
+        val pausing = object : AgentHooks by hooks {
+            val asked = mutableListOf<UIMessage>()
+
+            override suspend fun shouldPause(message: UIMessage): Boolean {
+                asked += message
+                return true
+            }
+        }
+        provider.stream {
+            toolCall("call-1", "search")
+            finish()
+        }
+
+        val paused = runToEnd(request(tools = listOf(tool("search"))), pausing).finished()
+
+        assertEquals(AgentFinishReason.Paused, paused.reason)
+        assertTrue(paused.message.tool("call-1").isExecuted)
+        assertEquals(1, provider.requests.size)
+        assertTrue(pausing.asked.single().tool("call-1").isExecuted)
+
+        // 接着这条消息再运行：工具已经执行完，不会还没请求模型就再次暂停
+        provider.stream {
+            text("done")
+            finish()
+        }
+        val finished = runToEnd(
+            request(messages = listOf(UIMessage.user("hi"), paused.message), tools = listOf(tool("search"))),
+            pausing,
+        ).finished()
+
+        assertEquals(AgentFinishReason.Completed, finished.reason)
+        assertEquals(listOf("done"), finished.message.texts())
+        assertEquals(1, pausing.asked.size)
     }
 
     @Test

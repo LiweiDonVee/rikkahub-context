@@ -187,7 +187,6 @@ class ResponseAPI(
                 type: String?,
                 data: String
             ) {
-                Log.d(TAG, "onEvent: $id/$type $data")
                 try {
                     val result = decoder.accept(SseEvent(id = id, event = type, data = data))
                     sendChunks(result.chunks)

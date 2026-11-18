@@ -13,6 +13,9 @@ interface ManagedFileDAO {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(file: ManagedFileEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMissing(file: ManagedFileEntity): Long
+
     @Update
     suspend fun update(file: ManagedFileEntity)
 

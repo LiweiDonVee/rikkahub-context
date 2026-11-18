@@ -62,6 +62,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.model.withConversation
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.message.ChatMessage
@@ -70,6 +71,7 @@ import me.rerere.rikkahub.ui.components.context.ContextInsertionSheet
 import me.rerere.rikkahub.ui.components.context.ContextWorkbench
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.hooks.ImeLazyListAutoScroller
+import me.rerere.rikkahub.ui.pages.quickstart.QuickStartCard
 import me.rerere.rikkahub.ui.theme.ChatFontProvider
 import me.rerere.rikkahub.utils.plus
 import me.rerere.ui.components.ListSelectableItem
@@ -86,6 +88,7 @@ fun ChatList(
     previewListState: LazyListState,
     selectionState: ChatSelectionState,
     loading: Boolean,
+    compressing: Boolean = false,
     processingStatus: String? = null,
     previewMode: Boolean,
     onPreviewModeChange: (Boolean) -> Unit,
@@ -102,6 +105,7 @@ fun ChatList(
     onClickSuggestion: (String) -> Unit = {},
     onTranslate: ((UIMessage, java.util.Locale) -> Unit)? = null,
     onClearTranslation: (UIMessage) -> Unit = {},
+    onShowBranchTree: () -> Unit = {},
     onJumpToMessage: (Int) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
@@ -147,6 +151,7 @@ fun ChatList(
                 conversation = conversation,
                 state = state,
                 loading = loading,
+                compressing = compressing,
                 processingStatus = processingStatus,
                 settings = settings,
                 hazeState = hazeState,
@@ -187,6 +192,7 @@ fun ChatList(
                     settings = settings,
                     hazeState = hazeState,
                     onJumpToMessage = onJumpToMessage,
+                    onShowBranchTree = onShowBranchTree,
                 )
             }
         }
@@ -218,6 +224,7 @@ private fun ChatListNormal(
     conversation: Conversation,
     state: LazyListState,
     loading: Boolean,
+    compressing: Boolean,
     processingStatus: String? = null,
     settings: Settings,
     hazeState: HazeState,
@@ -308,6 +315,10 @@ private fun ChatListNormal(
             .associateBy { it.id }
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
+    // 流式输出时会频繁重组，只在相关配置变了才重新查找模型
+    val needsSetup = remember(settings.init, settings.providers, settings.chatModelId, settings.assistants, conversation.assistantId, conversation.config) {
+        !settings.init && settings.getChatModelOf(conversation) == null
+    }
 
     Box(
         modifier = Modifier
@@ -353,7 +364,7 @@ private fun ChatListNormal(
                 modifier = Modifier
                     .fillMaxSize()
                     .topFadingEdge(innerPadding.calculateTopPadding() + 24.dp)
-                    .hazeSource(state = hazeState),
+                    .then(if (settings.displaySetting.enableBlurEffect) Modifier.hazeSource(hazeState) else Modifier),
             ) {
             itemsIndexed(
                 items = conversation.messageNodes,
@@ -377,7 +388,7 @@ private fun ChatListNormal(
                             model = node.currentMessage.modelId?.let(modelById::get)
                                 ?: node.currentMessage.snapshotModel(),
                             assistant = assistant,
-                            loading = loading && index == lastMessageIndex,
+                            loading = loading && !compressing && index == lastMessageIndex,
                             onRegenerate = {
                                 onRegenerate(node.currentMessage)
                             },
@@ -425,6 +436,7 @@ private fun ChatListNormal(
                 }
             }
 
+            // 压缩时也用这一行，processingStatus 显示的是压缩中
             if (loading) {
                 item(LoadingIndicatorKey) {
                     Row(
@@ -445,6 +457,13 @@ private fun ChatListNormal(
                             )
                         }
                     }
+                }
+            }
+
+            // 没有可用模型就发不了消息，放在消息后面，空会话时在顶部、有消息时贴着输入框
+            if (needsSetup) {
+                item(key = "QuickStartCard") {
+                    QuickStartCard(modifier = Modifier.animateItem())
                 }
             }
 

@@ -314,23 +314,11 @@ fun List<UIMessagePart>.toSortedMessageParts(): List<UIMessagePart> {
 }
 
 fun UIMessage.finishReasoning(): UIMessage {
-    return copy(
-        parts = parts.map { part ->
-            when (part) {
-                is UIMessagePart.Reasoning -> {
-                    if (part.finishedAt == null) {
-                        part.copy(
-                            finishedAt = Clock.System.now()
-                        )
-                    } else {
-                        part
-                    }
-                }
-
-                else -> part
-            }
-        }
-    )
+    if (parts.none { it is UIMessagePart.Reasoning && it.finishedAt == null }) return this
+    val end = Clock.System.now()
+    return copy(parts = parts.map { part ->
+        if (part is UIMessagePart.Reasoning && part.finishedAt == null) part.copy(finishedAt = end) else part
+    })
 }
 
 fun UIMessage.finishPendingTools(

@@ -63,6 +63,7 @@ import me.rerere.hugeicons.stroke.Megaphone01
 import me.rerere.hugeicons.stroke.Moon02
 import me.rerere.hugeicons.stroke.Package
 import me.rerere.hugeicons.stroke.ServerStack01
+import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Settings03
 import me.rerere.hugeicons.stroke.Share04
 import me.rerere.hugeicons.stroke.SmartPhone01
@@ -79,7 +80,9 @@ import me.rerere.rikkahub.ui.components.ui.CardGroupIcon
 import me.rerere.rikkahub.ui.components.ui.ConnectedChoiceButtons
 import me.rerere.rikkahub.ui.components.ui.ConnectedChoiceLabel
 import me.rerere.rikkahub.ui.components.ui.permission.LocalNetworkPermissionCard
+import me.rerere.rikkahub.ui.components.ui.permission.NotificationPermissionCard
 import me.rerere.rikkahub.ui.components.ui.permission.rememberLocalNetworkPermissionState
+import me.rerere.rikkahub.ui.components.ui.permission.rememberNotificationPermissionState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.hooks.rememberColorMode
 import me.rerere.rikkahub.ui.theme.ColorMode
@@ -101,6 +104,7 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
     val launchCount by vm.launchCount.collectAsStateWithLifecycle()
     val filesManager: FilesManager = koinInject()
     val localNetworkPermission = rememberLocalNetworkPermissionState()
+    val notificationPermission = rememberNotificationPermissionState()
 
     if (!settings.init && launchCount > 100 && (launchCount - settings.sponsorAlertDismissedAt) >= 50) {
         AlertDialog(
@@ -152,7 +156,7 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
             if (settings.isNotConfigured()) {
                 item {
                     ProviderConfigWarningCard(
-                        onClick = { navController.navigate(Screen.SettingProvider) }
+                        onClick = { navController.navigate(Screen.QuickStart) }
                     )
                 }
             }
@@ -160,6 +164,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
             if (localNetworkPermission?.allRequiredPermissionsGranted == false) {
                 item("localNetworkPermission") {
                     LocalNetworkPermissionCard(permissionState = localNetworkPermission)
+                }
+            }
+
+            if (notificationPermission?.allRequiredPermissionsGranted == false) {
+                item("notificationPermission") {
+                    NotificationPermissionCard(permissionState = notificationPermission)
                 }
             }
 
@@ -357,6 +367,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                             }
                         },
                         headlineContent = { Text(stringResource(R.string.setting_page_about)) },
+                    )
+                    item(
+                        onClick = { navController.navigate(Screen.QuickStart) },
+                        leadingContent = { CardGroupIcon(HugeIcons.Rocket01, containerColor = containerColor, contentColor = contentColor) },
+                        supportingContent = { Text(stringResource(R.string.setting_page_quick_start_desc)) },
+                        headlineContent = { Text(stringResource(R.string.setting_page_quick_start)) },
                     )
                     item(
                         onClick = {

@@ -1,7 +1,9 @@
 package me.rerere.ai.agent
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.buildJsonObject
@@ -50,14 +52,18 @@ internal class AgentLoop(
         var steps = 0
         while (true) {
             val current = message
+            var toolsExecuted = false
             if (current != null && current.getTools().any { !it.isExecuted }) {
                 val pending = requestApprovals(current)
                 if (pending.isNotEmpty()) return finish(AgentFinishReason.AwaitingApproval(pending))
                 executeTools()
+                toolsExecuted = true
             } else if (current != null && steps > 0) {
                 return finish(AgentFinishReason.Completed)
             }
             if (steps == request.maxSteps) return finish(AgentFinishReason.StepLimitReached)
+            // 只在刚执行完工具时问：接着一条已经执行完的消息继续时不问，否则暂停之后再运行又会立刻暂停
+            if (toolsExecuted && hooks.shouldPause(checkNotNull(message))) return finish(AgentFinishReason.Paused)
             generateStep()
             steps++
         }
@@ -120,6 +126,8 @@ internal class AgentLoop(
         // 多轮工具调用共用同一条助手消息，消息上已有的 usage 和耗时来自之前的步骤。
         // 本步从清空的统计开始（merge 只适合同一次请求内的快照），再与之前的步骤累加。
         val stepStart = base.copy(usage = null, generationTimeMs = null)
+        var latest: UIMessage? = null
+        var latestStart: TimeMark? = null
         return try {
             withRetry(request.retry, onRetry = { events.emit(AgentEvent.Retrying(it)) }) {
                 // 每次重试都从本步开始时的消息重新合并，不会把重试的响应接在已经展示的半截回复后面；
@@ -127,11 +135,17 @@ internal class AgentLoop(
                 val handler = StreamChunkHandler(params.model)
                 var attempt = stepStart
                 var firstChunk: TimeMark? = null
+                var lastPreview: TimeMark? = null
                 request.provider.streamText(request.providerSetting, messages, params).collect { chunk ->
                     try {
                         val mark = firstChunk ?: TimeSource.Monotonic.markNow().also { firstChunk = it }
                         attempt = handler.handle(listOf(attempt), chunk).single()
-                        preview(attempt.withStepStats(base, mark.elapsedNow()), newPartsFrom = base.parts.size)
+                        latest = attempt
+                        latestStart = mark
+                        if (lastPreview?.elapsedNow()?.let { it >= request.previewInterval } != false) {
+                            preview(attempt.withStepStats(base, mark.elapsedNow()), newPartsFrom = base.parts.size)
+                            lastPreview = TimeSource.Monotonic.markNow()
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -143,6 +157,23 @@ internal class AgentLoop(
             }
         } catch (e: StreamChunkHandlingException) {
             throw e.cause
+        } catch (e: Exception) {
+            if (request.previewInterval > Duration.ZERO) {
+                latest?.let { frame ->
+                    withContext(NonCancellable) {
+                        val saved = runCatching {
+                            hooks.interruptedPreview(
+                                hooks.previewStep(
+                                    frame.withStepStats(base, latestStart?.elapsedNow() ?: Duration.ZERO),
+                                    base.parts.size
+                                )
+                            )
+                        }
+                        saved.exceptionOrNull()?.takeIf { it !== e }?.let(e::addSuppressed)
+                    }
+                }
+            }
+            throw e
         }
     }
 

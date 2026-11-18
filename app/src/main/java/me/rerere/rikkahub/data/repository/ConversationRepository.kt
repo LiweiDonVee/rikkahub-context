@@ -18,7 +18,9 @@ import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
+import me.rerere.rikkahub.data.db.entity.ConversationBranchEntity
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
+import me.rerere.rikkahub.data.db.entity.ConversationPathEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
@@ -38,6 +40,8 @@ class ConversationRepository(
     private val filesManager: FilesManager,
     private val messageFtsManager: MessageFtsManager,
 ) {
+    private val branchDAO get() = database.conversationBranchDao()
+
     companion object {
         private const val PAGE_SIZE = 20
         private const val INITIAL_LOAD_SIZE = 40
@@ -302,14 +306,9 @@ class ConversationRepository(
             }
         }
 
-    suspend fun getConversationById(uuid: Uuid): Conversation? {
-        val entity = conversationDAO.getConversationById(uuid.toString())
-        return if (entity != null) {
-            val nodes = loadMessageNodes(entity.id)
-            conversationEntityToConversation(entity, nodes)
-        } else {
-            null
-        }
+    suspend fun getConversationById(uuid: Uuid): Conversation? = database.withTransaction {
+        val entity = conversationDAO.getConversationById(uuid.toString()) ?: return@withTransaction null
+        conversationEntityToConversation(entity, loadMessageNodes(entity.id))
     }
 
     suspend fun existsConversationById(uuid: Uuid): Boolean {
@@ -328,34 +327,222 @@ class ConversationRepository(
 
     suspend fun insertConversation(conversation: Conversation) {
         database.withTransaction {
-            conversationDAO.insert(
-                conversationToConversationEntity(conversation)
-            )
+            conversationDAO.insert(conversationToConversationEntity(conversation))
             saveMessageNodes(conversation.id.toString(), conversation.messageNodes)
+            messageFtsManager.appendNodes(conversation.id.toString(), conversation.messageNodes)
         }
-        messageFtsManager.indexConversation(conversation)
     }
 
-    suspend fun updateConversation(conversation: Conversation) {
+    suspend fun updateConversation(conversation: Conversation, previous: Conversation? = null) {
         database.withTransaction {
-            conversationDAO.update(
-                conversationToConversationEntity(conversation)
-            )
-            // 删除旧的节点，插入新的节点
-            messageNodeDAO.deleteByConversation(conversation.id.toString())
-            saveMessageNodes(conversation.id.toString(), conversation.messageNodes)
+            val id = conversation.id.toString()
+            val old = previous ?: getConversationById(conversation.id)
+            val oldNodes = old?.messageNodes.orEmpty()
+            val indexed = oldNodes.withIndex().associateBy { it.value.id }
+            val active = branchDAO.active(id)
+            if (old == null || conversationToConversationEntity(old) != conversationToConversationEntity(conversation)) {
+                conversationDAO.update(conversationToConversationEntity(conversation))
+            }
+
+            val writes = mutableListOf<MessageNodeEntity>()
+            val indexWrites = mutableListOf<MessageNode>()
+            val indexRemovals = mutableSetOf<String>()
+            val currentIds = mutableSetOf<Uuid>()
+            conversation.messageNodes.forEachIndexed { position, node ->
+                currentIds.add(node.id)
+                val before = indexed[node.id]
+                val changedMessages = before?.value?.messages != node.messages
+                if (changedMessages || before?.value?.selectIndex != node.selectIndex) {
+                    writes.add(node.toEntity(id, position))
+                } else if (active == null && before != null && before.index != position) {
+                    messageNodeDAO.updatePosition(node.id.toString(), position)
+                }
+                if (changedMessages) {
+                    indexWrites.add(node)
+                    if (before != null) indexRemovals.add(node.id.toString())
+                }
+            }
+            if (writes.isNotEmpty()) messageNodeDAO.insertAll(writes)
+
+            val removed = if (active == null) {
+                oldNodes.filter { it.id !in currentIds }.map { it.id.toString() }
+            } else if (oldNodes !== conversation.messageNodes) {
+                updateBranchPath(active, conversation.messageNodes)
+            } else {
+                emptyList()
+            }
+            removed.chunked(400).forEach { messageNodeDAO.deleteByIds(it) }
+            if (removed.isNotEmpty()) deleteNodeFavorites(conversation.id, removed.map { Uuid.parse(it) })
+            indexRemovals.addAll(removed)
+            if (indexWrites.isNotEmpty() || indexRemovals.isNotEmpty()) {
+                messageFtsManager.replaceNodes(id, indexRemovals, indexWrites)
+            }
         }
-        messageFtsManager.indexConversation(conversation)
     }
+
+    suspend fun getConversationTree(conversationId: Uuid): ConversationTree = database.withTransaction {
+        val id = conversationId.toString()
+        ConversationTree(branchDAO.links(id), branchDAO.branches(id))
+    }
+
+    suspend fun createConversationBranch(conversationId: Uuid, messageId: Uuid): Conversation =
+        database.withTransaction {
+            val conversation = checkNotNull(getConversationById(conversationId))
+            val nodeIndex = conversation.messageNodes.indexOfFirst { node -> node.messages.any { it.id == messageId } }
+            require(nodeIndex >= 0) { "Message not found in the active branch" }
+            val id = conversationId.toString()
+            val previous = branchDAO.active(id) ?: seedBranch(id, conversation.messageNodes)
+            val selected = conversation.messageNodes[nodeIndex]
+            val prefix = branchDAO.path(previous.tipId).take(nodeIndex + 1)
+            val tip = prefix.last()
+            val selectedTip = if (tip.messageId == messageId.toString()) {
+                tip
+            } else {
+                val version = selected.messages.first { it.id == messageId }
+                pathLink(id, tip.parentId, selected.id.toString(), version).also {
+                    branchDAO.insertLinks(listOf(it))
+                }
+            }
+            branchDAO.update(previous.copy(active = false))
+            branchDAO.insertBranches(listOf(ConversationBranchEntity(Uuid.random().toString(), id, selectedTip.id, true)))
+            conversationDAO.updateChatSuggestions(id, "[]")
+            checkNotNull(getConversationById(conversationId))
+        }
+
+    suspend fun switchConversationBranch(conversationId: Uuid, branchId: String): Conversation =
+        database.withTransaction {
+            val id = conversationId.toString()
+            val branches = branchDAO.branches(id)
+            val selected = branches.firstOrNull { it.id == branchId } ?: error("Branch not found")
+            if (!selected.active) {
+                branches.firstOrNull { it.active }?.let { branchDAO.update(it.copy(active = false)) }
+                branchDAO.update(selected.copy(active = true))
+                conversationDAO.updateChatSuggestions(id, "[]")
+            }
+            checkNotNull(getConversationById(conversationId))
+        }
+
+    suspend fun getBranchConversation(conversationId: Uuid, branchId: String): Conversation? =
+        database.withTransaction {
+            val entity = conversationDAO.getConversationById(conversationId.toString()) ?: return@withTransaction null
+            val branch = branchDAO.branches(entity.id).firstOrNull { it.id == branchId } ?: return@withTransaction null
+            conversationEntityToConversation(entity, loadPathNodes(entity.id, branch.tipId))
+        }
+
+    suspend fun knownImportNodes(conversationId: Uuid): Set<Uuid> =
+        messageNodeDAO.getIds(conversationId.toString()).mapTo(mutableSetOf(), Uuid::parse)
+
+    /** Add source paths without replacing locally edited nodes or an already open branch. */
+    suspend fun importConversationTree(
+        conversation: Conversation,
+        sourceLinks: List<ConversationPathEntity>,
+        sourceTipId: String?,
+    ): Boolean = database.withTransaction {
+        val id = conversation.id.toString()
+        val existing = conversationDAO.getConversationById(id)
+        val oldBranches = branchDAO.branches(id)
+        val oldLinks = branchDAO.links(id).mapTo(mutableSetOf()) { it.id }
+        val ids = messageNodeDAO.getIds(id).toHashSet()
+        val newNodes = conversation.messageNodes.filter { it.id.toString() !in ids }
+        val newLinks = sourceLinks.filter { it.id !in oldLinks }
+        val parentIds = sourceLinks.mapNotNullTo(mutableSetOf()) { it.parentId }
+        val tips = (listOfNotNull(sourceTipId) + sourceLinks.filter { it.id !in parentIds }.map { it.id }).distinct()
+        val branchIds = oldBranches.mapTo(mutableSetOf()) { it.id }
+        val newBranches = tips.filter { "deepseek:$it" !in branchIds }.map { tip ->
+            ConversationBranchEntity("deepseek:$tip", id, tip, existing == null && tip == tips.first())
+        }
+        if (existing != null && oldBranches.isNotEmpty() && newNodes.isEmpty() &&
+            newLinks.isEmpty() && newBranches.isEmpty()) return@withTransaction false
+
+        val oldPath = if (existing != null && oldBranches.isEmpty()) loadMessageNodes(id) else emptyList()
+        if (existing == null) {
+            conversationDAO.insert(conversationToConversationEntity(conversation))
+        } else if (oldBranches.isEmpty()) {
+            // An upstream current-path import is identified by the same deterministic session id.
+            conversationDAO.updateAssistantId(id, conversation.assistantId.toString())
+        }
+
+        saveMessageNodes(id, newNodes)
+        val localNodes = oldPath.associateBy { it.id.toString() }
+        branchDAO.insertLinks(newLinks.map { link ->
+            val local = localNodes[link.nodeId]?.messages?.firstOrNull { it.id.toString() == link.messageId }
+            if (local == null) link else link.copy(label = local.branchLabel())
+        })
+        branchDAO.insertBranches(newBranches)
+        if (existing != null && oldBranches.isEmpty()) {
+            val preferred = newBranches.first()
+            val path = branchDAO.path(preferred.tipId)
+            if (oldPath.size == path.size && oldPath.zip(path).all { (node, link) ->
+                    node.id.toString() == link.nodeId && node.currentMessage.id.toString() == link.messageId
+                }) {
+                branchDAO.update(preferred.copy(active = true))
+            } else {
+                seedBranch(id, oldPath)
+            }
+        }
+        messageFtsManager.appendNodes(id, newNodes)
+        true
+    }
+
+    private suspend fun seedBranch(id: String, nodes: List<MessageNode>): ConversationBranchEntity {
+        val links = buildPath(id, null, nodes)
+        branchDAO.insertLinks(links)
+        val branch = ConversationBranchEntity(Uuid.random().toString(), id, links.lastOrNull()?.id, true)
+        branchDAO.insertBranches(listOf(branch))
+        return branch
+    }
+
+    private suspend fun updateBranchPath(branch: ConversationBranchEntity, nodes: List<MessageNode>): List<String> {
+        val path = branchDAO.path(branch.tipId)
+        var common = 0
+        while (common < minOf(path.size, nodes.size)) {
+            val link = path[common]
+            val node = nodes[common]
+            if (link.nodeId != node.id.toString() || link.messageId != node.currentMessage.id.toString()) break
+            val label = node.currentMessage.branchLabel()
+            if (label != link.label) branchDAO.updateLabel(link.id, label)
+            common++
+        }
+        if (common == path.size && common == nodes.size) return emptyList()
+        val parent = path.getOrNull(common - 1)?.id
+        val suffix = buildPath(branch.conversationId, parent, nodes.drop(common))
+        branchDAO.insertLinks(suffix)
+        branchDAO.update(branch.copy(tipId = suffix.lastOrNull()?.id ?: parent))
+        if (common == path.size) return emptyList()
+
+        // Retire only the replaced suffix. Other tips can still depend on that ancestry.
+        val tree = ConversationTree(branchDAO.links(branch.conversationId), branchDAO.branches(branch.conversationId))
+        val retained = tree.reachableLinks()
+        val stale = path.drop(common).filter { it.id !in retained }
+        stale.map { it.id }.chunked(400).forEach { branchDAO.deleteLinks(it) }
+        val retainedNodes = tree.links.filter { it.id in retained }.mapTo(mutableSetOf()) { it.nodeId }
+        return stale.map { it.nodeId }.distinct().filter { it !in retainedNodes }
+    }
+
+    private fun buildPath(id: String, parentId: String?, nodes: List<MessageNode>): List<ConversationPathEntity> {
+        var parent = parentId
+        return nodes.map { node ->
+            pathLink(id, parent, node.id.toString(), node.currentMessage).also { parent = it.id }
+        }
+    }
+
+    private fun pathLink(id: String, parent: String?, nodeId: String, message: UIMessage) =
+        ConversationPathEntity(
+            id = Uuid.random().toString(),
+            conversationId = id,
+            parentId = parent,
+            nodeId = nodeId,
+            messageId = message.id.toString(),
+            label = message.branchLabel(),
+            role = message.role.name,
+        )
 
     suspend fun deleteConversation(conversation: Conversation) {
-        // 获取完整的 Conversation（包含 messageNodes）以正确清理文件
-        val fullConversation = if (conversation.messageNodes.isEmpty()) {
-            getConversationById(conversation.id) ?: conversation
-        } else {
-            conversation
-        }
         val conversationId = conversation.id.toString()
+        val allFiles = messageNodeDAO.getIds(conversationId).chunked(64).flatMap { ids ->
+            val nodes = messageNodeDAO.getByIds(ids).map { it.toModel(emptySet()) }
+            conversation.copy(messageNodes = nodes).files
+        }
         val archivedFiles = database.contextRequestDao().responseFileLists(conversationId)
             .flatMap { JsonInstant.decodeFromString<List<String>>(it) }.map { it.toUri() }
         messageFtsManager.deleteConversation(conversationId)
@@ -367,7 +554,7 @@ class ConversationRepository(
                 conversationToConversationEntity(conversation)
             )
         }
-        filesManager.deleteChatFiles((fullConversation.files + archivedFiles).distinct())
+        filesManager.deleteChatFiles((allFiles + archivedFiles).distinct().filterNot { hasFileReference(it.toString()) })
     }
 
     /** 删除这些节点的收藏，节点从会话里移除后调用 */
@@ -394,7 +581,9 @@ class ConversationRepository(
         val total = allIds.size
         allIds.forEachIndexed { index, id ->
             val entity = conversationDAO.getConversationById(id) ?: return@forEachIndexed
-            val nodes = loadMessageNodes(entity.id)
+            val nodes = messageNodeDAO.getIds(id).chunked(64).flatMap { ids ->
+                messageNodeDAO.getByIds(ids).map { it.toModel(emptySet()) }
+            }
             val conversation = conversationEntityToConversation(entity, nodes)
             messageFtsManager.indexConversation(conversation)
             onProgress(index + 1, total)
@@ -516,12 +705,10 @@ class ConversationRepository(
     }
 
     private suspend fun loadMessageNodes(conversationId: String): List<MessageNode> {
-        val favoriteNodeIds = favoriteDAO
-            .getFavoriteNodeIdsOfConversation(conversationId)
-            .mapNotNull { runCatching { Uuid.parse(it) }.getOrNull() }
-            .toSet()
+        val favoriteNodeIds = favoriteIds(conversationId)
 
         return database.withTransaction {
+            branchDAO.active(conversationId)?.let { return@withTransaction loadPathNodes(conversationId, it.tipId) }
             val nodes = mutableListOf<MessageNode>()
             var offset = 0
             val pageSize = 64
@@ -541,35 +728,45 @@ class ConversationRepository(
                     continue
                 }
                 if (page.isEmpty()) break
-                page.forEach { entity ->
-                    val messages = JsonInstant.decodeFromString<List<UIMessage>>(entity.messages)
-                    val nodeId = Uuid.parse(entity.id)
-                    nodes.add(
-                        MessageNode(
-                            id = nodeId,
-                            messages = messages,
-                            selectIndex = entity.selectIndex,
-                            isFavorite = favoriteNodeIds.contains(nodeId)
-                        )
-                    )
-                }
+                page.mapTo(nodes) { it.toModel(favoriteNodeIds) }
                 offset += page.size
             }
             nodes
         }
     }
 
-    private suspend fun saveMessageNodes(conversationId: String, nodes: List<MessageNode>) {
-        val entities = nodes.mapIndexed { index, node ->
-            MessageNodeEntity(
-                id = node.id.toString(),
-                conversationId = conversationId,
-                nodeIndex = index,
-                messages = JsonInstant.encodeToString(node.messages),
-                selectIndex = node.selectIndex
-            )
+    private suspend fun favoriteIds(conversationId: String): Set<String> =
+        favoriteDAO.getFavoriteNodeIdsOfConversation(conversationId).toSet()
+
+    private suspend fun loadPathNodes(conversationId: String, tipId: String?): List<MessageNode> {
+        val favorites = favoriteIds(conversationId)
+        return branchDAO.path(tipId).chunked(64).flatMap { links ->
+            val nodes = messageNodeDAO.getByIds(links.map { it.nodeId }).associateBy { it.id }
+            links.map { link ->
+                val node = checkNotNull(nodes[link.nodeId]) { "Branch path references a missing message" }.toModel(favorites)
+                val selected = node.messages.indexOfFirst { it.id.toString() == link.messageId }
+                if (selected < 0) node else node.copy(selectIndex = selected)
+            }
         }
-        messageNodeDAO.insertAll(entities)
+    }
+
+    private fun MessageNodeEntity.toModel(favoriteNodeIds: Set<String>): MessageNode = MessageNode(
+        id = Uuid.parse(id),
+        messages = JsonInstant.decodeFromString<List<UIMessage>>(messages),
+        selectIndex = selectIndex,
+        isFavorite = id in favoriteNodeIds,
+    )
+
+    private fun MessageNode.toEntity(conversationId: String, index: Int) = MessageNodeEntity(
+        id = id.toString(),
+        conversationId = conversationId,
+        nodeIndex = index,
+        messages = JsonInstant.encodeToString(messages),
+        selectIndex = selectIndex,
+    )
+
+    private suspend fun saveMessageNodes(conversationId: String, nodes: List<MessageNode>) {
+        if (nodes.isNotEmpty()) messageNodeDAO.insertAll(nodes.mapIndexed { index, node -> node.toEntity(conversationId, index) })
     }
 }
 

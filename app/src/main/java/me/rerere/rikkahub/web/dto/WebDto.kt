@@ -4,8 +4,8 @@ import kotlinx.serialization.Serializable
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.ui.ModelSnapshot
-import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.ConversationConfig
@@ -231,6 +231,9 @@ data class MessageDto(
     val modelSnapshot: ModelSnapshot? = null,
     val usage: TokenUsage? = null,
     val generationTimeMs: Long? = null,
+    // usage 是多步累计值，lastUsage 是最后一次请求自己的
+    val lastUsage: TokenUsage? = null,
+    val stepCount: Int? = null,
     val translation: String? = null,
     val isContextCheckpoint: Boolean = false,
 )
@@ -374,6 +377,8 @@ fun UIMessage.toDto() = MessageDto(
     modelSnapshot = modelSnapshot,
     usage = usage,
     generationTimeMs = generationTimeMs,
+    lastUsage = lastUsage,
+    stepCount = stepCount,
     translation = translation,
     isContextCheckpoint = isContextCheckpoint,
 )

@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.ai.ui.finishReasoning
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.isAwaitingToolApproval
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
@@ -51,6 +52,7 @@ class ConversationSession(
     val state: StateFlow<Conversation> = _state.asStateFlow()
     private val initializationMutex = Mutex()
     private val writeMutex = Mutex()
+    @Volatile private var changingBranch = false
 
     @Volatile
     var isInitialized = false
@@ -101,6 +103,7 @@ class ConversationSession(
     @Synchronized
     fun tryUpdate(transform: (Conversation) -> Conversation?): Conversation? {
         check(isInitialized) { "Conversation $id is not loaded yet" }
+        check(!changingBranch) { "Wait for the branch to finish loading" }
         val updated = transform(_state.value) ?: return null
         require(updated.id == id)
         _state.value = updated
@@ -113,20 +116,44 @@ class ConversationSession(
      */
     suspend fun flush(): Conversation {
         if (!isInitialized) return state.value
-        return writeMutex.withLock {
-            val latest = state.value
-            if (latest === lastWritten) return@withLock latest
-            // 还没内容的新会话不落库，也不能提前固定配置：会话开始前聊天页的修改要写回助手
-            if (!existsInDatabase && latest.title.isBlank() && latest.messageNodes.isEmpty()) {
-                return@withLock latest
-            }
-            val current = update(store.prepareWrite())
-            store.write(previous = lastWritten.takeIf { existsInDatabase }, current = current)
-            lastWritten = current
-            existsInDatabase = true
-            current
-        }
+        return writeMutex.withLock { flushLocked() }
     }
+
+    private suspend fun flushLocked(): Conversation {
+        val latest = state.value
+        if (latest === lastWritten) return latest
+        if (!existsInDatabase && latest.title.isBlank() && latest.messageNodes.isEmpty()) return latest
+        val current = update(store.prepareWrite())
+        store.write(previous = lastWritten.takeIf { existsInDatabase }, current = current)
+        lastWritten = current
+        existsInDatabase = true
+        return current
+    }
+
+    internal suspend fun changeBranch(transition: suspend () -> Conversation): Conversation =
+        writeMutex.withLock {
+            flushLocked()
+            synchronized(this) {
+                check(activeJobs.isEmpty() && _state.value === lastWritten) { "Finish the current message operation first" }
+                changingBranch = true
+            }
+            try {
+                withContext(NonCancellable) {
+                    val selected = transition()
+                    synchronized(this@ConversationSession) {
+                        _state.value = selected
+                        incarnation++
+                    }
+                    lastWritten = selected
+                    replyMessageId.value = null
+                    generationStartedAt.value = null
+                    autoCompressedReplyId = null
+                    selected
+                }
+            } finally {
+                changingBranch = false
+            }
+        }
 
     /**
      * 只修改还没落库的新会话，只改内存，首次落库时一并写入；会话已经落库时不修改，返回 false。
@@ -202,7 +229,8 @@ class ConversationSession(
         update { current ->
             current.copy(
                 messageNodes = current.messageNodes.map { node ->
-                    node.copy(messages = node.messages.map { it.finishReasoning() })
+                    val messages = node.messages.map { it.finishReasoning() }
+                    if (messages.indices.all { messages[it] === node.messages[it] }) node else node.copy(messages = messages)
                 },
                 updateAt = Instant.now(),
             )
@@ -234,10 +262,20 @@ class ConversationSession(
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
 
-    // 压缩中不自动开始新的一轮，否则摘要返回时发现正在生成，这次压缩就作废了
+    // 任务槽里的任务在做什么；槽空着时是 null。界面靠它区分生成回复和压缩上下文
+    private val _activity = MutableStateFlow<SessionActivity?>(null)
+    val activity: StateFlow<SessionActivity?> = _activity.asStateFlow()
+
+    /**
+     * 能否自动开始下一轮（收件箱派发、自动压缩）：任务槽空着，且这一轮没有在等工具审批。
+     * 压缩也占任务槽，所以压缩期间同样不会开始。
+     */
+    val canStartNextTurn: Boolean
+        get() = !changingBranch && _generationJob.value == null && !state.value.isAwaitingToolApproval
+
+    // 自动压缩已经为哪条回复试过；压缩失败后不再为同一条回复反复重试
     @Volatile
-    var isCompressing = false
-        internal set
+    var autoCompressedReplyId: Uuid? = null
 
     val isInUse: Boolean
         get() = refCount.get() > 0 || _generationJob.value != null ||
@@ -255,9 +293,15 @@ class ConversationSession(
     }
 
     @Synchronized
-    fun setJob(job: Job?, cancelPrevious: Boolean = true) {
+    fun setJob(job: Job?, cancelPrevious: Boolean = true, activity: SessionActivity = SessionActivity.Generating) {
+        if (changingBranch && job != null) {
+            job.cancel()
+            error("Wait for the branch to finish loading")
+        }
         val previous = _generationJob.value
         if (job != null) generationStartedAt.value = System.currentTimeMillis()
+        // 先于任务槽更新，界面看到新任务时类型已经对了
+        _activity.value = activity.takeIf { job != null }
         _generationJob.value = job
         if (cancelPrevious) previous?.cancel()
         if (job != null) activeJobs.add(job)
@@ -268,6 +312,7 @@ class ConversationSession(
                 if (!cancelPrevious && cause is CancellationException) previous?.cancel()
                 // A replaced job must not clear or advance its successor.
                 if (_generationJob.compareAndSet(job, null)) {
+                    _activity.value = null
                     onGenerationFinished(id, cause)
                     if (refCount.get() <= 0) scheduleIdleCheck()
                 }
@@ -277,6 +322,12 @@ class ConversationSession(
     }
 
     fun getJob(): Job? = _generationJob.value
+
+    /** 占着任务槽的任务中途换了在做的事（生成回复的中途压缩上下文）；槽空着时不改 */
+    @Synchronized
+    fun setActivity(activity: SessionActivity) {
+        if (_generationJob.value != null) _activity.value = activity
+    }
 
     @Synchronized
     fun cancelJobs(): List<Job> = activeJobs.toList().also { jobs ->
@@ -319,6 +370,15 @@ class ConversationSession(
 }
 
 /** Serialize approval saves without cancelling earlier decisions; stopping cancels the whole chain. */
+/** 会话任务槽里的任务类型 */
+enum class SessionActivity {
+    /** 生成回复：发送、重新生成、审批后继续 */
+    Generating,
+
+    /** 压缩上下文：手动或自动 */
+    Compressing,
+}
+
 internal suspend fun afterPreviousGeneration(previous: Job?, block: suspend () -> Unit) {
     try {
         previous?.join()

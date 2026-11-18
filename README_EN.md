@@ -3,7 +3,7 @@
   <h1>RikkaHub Context Engineering</h1>
   <p><strong>Your context. Your decisions.</strong></p>
   <p>A native Android workspace for user-directed context engineering.</p>
-  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.1.2-context.4">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
+  <p><a href="https://github.com/LiweiDonVee/rikkahub-context/releases/tag/v3.3.0-context.5">Download APK</a> · <a href="README.md">简体中文</a> · <a href="README_ZH_TW.md">繁體中文</a></p>
 </div>
 
 An independent fork of [RikkaHub](https://github.com/rikkahub/rikkahub) that puts context composition in your hands.
@@ -23,6 +23,7 @@ Edited Thinking is sent through the current provider with its metadata preserved
 | Select a precise request | Choose messages, order, historical Thinking, Skills, calls and results |
 | Rewrite tool interactions | Edit names, JSON arguments and results; rerun one tool or continue from a saved result |
 | Combine conversations | Filter by assistant, search and sort conversations, select messages, and create or import context at any position |
+| Explore or migrate branching chats | Navigate native branches and import every DeepSeek chat into one assistant |
 | Compare experiments | Inspect wire bodies, JSON-path differences and each run's archived reply |
 
 ## Native editing
@@ -48,13 +49,19 @@ One full-content editor serves chat history, inserted messages, and assistant pr
 
 The input's Save and Preview action enters the same pipeline. Run Tool and Continue from Result independently control tool execution and model generation.
 
+## Branches and DeepSeek imports
+
+Create a branch from any message to explore a separate continuation within the same conversation. Open the branch tree from the chat menu or message overview to jump between paths and reply versions. A source branch can also be selected when importing context into another conversation.
+
+Choose the DeepSeek export ZIP in **Settings → Backup and restore → Import and export**. The app keeps each conversation and groups them under **DeepSeek history**. It imports every branch, Thinking, and available attachments locally. Reimporting adds new records and keeps local edits.
+
 ## Install
 
-Current version: **3.1.2-context.4**. Android 8.0 / API 26 or later.
+Current version: **3.3.0-context.5**. Android 8.0 / API 26 or later.
 
-- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-arm64-v8a-debug.apk).
-- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/RikkaHub-Context-3.1.2-context.4-universal-debug.apk), with ARM64 and x86_64.
-- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.1.2-context.4/SHA256SUMS.txt).
+- [ARM64 APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.3.0-context.5/RikkaHub-Context-3.3.0-context.5-arm64-v8a-debug.apk).
+- [Universal APK](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.3.0-context.5/RikkaHub-Context-3.3.0-context.5-universal-debug.apk), with ARM64 and x86_64.
+- [Releases](https://github.com/LiweiDonVee/rikkahub-context/releases) · [SHA-256 checksums](https://github.com/LiweiDonVee/rikkahub-context/releases/download/v3.3.0-context.5/SHA256SUMS.txt).
 
 The current APKs use Debug signing and package `me.rerere.rikkahub.context.debug`, so they can coexist with official RikkaHub. Configure your own provider, endpoint and model in the existing settings.
 
@@ -75,7 +82,7 @@ pnpm --dir web-ui install --frozen-lockfile
 
 [Build guide](docs/context-engineering/build.md) · [Architecture](docs/context-engineering/architecture.md) · [Verification](docs/context-engineering/testing.md) · [Upstream maintenance](docs/context-engineering/upstream-maintenance.md) · [Contributing](CONTRIBUTING.md)
 
-The context.4 validation includes **841 JVM tests and 23 Android integration/UI tests passing**.
+See the [validation record](docs/context-engineering/testing.md) for import, branches, persistence, presets, and request tests.
 
 ## Upstream and license
 

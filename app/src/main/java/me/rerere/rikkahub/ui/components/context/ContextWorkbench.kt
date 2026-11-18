@@ -70,7 +70,6 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
     var createBranch by remember { mutableStateOf(false) }
     var newVariant by remember { mutableStateOf(false) }
     var gate by remember { mutableStateOf<RequestReviewGate?>(null) }
-    var requestConversationId by remember { mutableStateOf(conversationId) }
     val busy = working || job?.isActive == true
     fun perform(action: suspend () -> Unit) {
         scope.launch {
@@ -85,9 +84,8 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
         insertionPosition = if (node == null) ContextInsertionPosition.End else if (before) ContextInsertionPosition.Before(node.id) else ContextInsertionPosition.After(node.id)
     }
     fun preview(part: Int?, continueAfter: Boolean) = perform {
-        val target = if (createBranch) service.forkConversationAtMessage(conversationId, messageId).id else conversationId
-        requestConversationId = target
-        gate = service.previewContextRequest(target, messageId, part, continueAfter, selection, newVariant)
+        if (createBranch) service.createConversationBranch(conversationId, messageId)
+        gate = service.previewContextRequest(conversationId, messageId, part, continueAfter, selection, newVariant)
     }
     ContextSheet(onDismiss) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -112,8 +110,8 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
                                 ItemAction("插入消息之前", HugeIcons.Add01, enabled = !busy) { insert(true) },
                                 ItemAction("插入消息之后", HugeIcons.Add01, enabled = !busy) { insert(false) },
                                 ItemAction("创建会话分支", HugeIcons.Copy01, enabled = !busy) { perform {
-                                    val branch = service.forkConversationAtMessage(conversationId, messageId)
-                                    onDismiss(); navigateToChatPage(navigator, branch.id)
+                                    service.createConversationBranch(conversationId, messageId)
+                                    onDismiss()
                                 } },
                                 ItemAction("恢复原始内容", HugeIcons.Refresh03, enabled = !busy && message.contextState.originalParts != null) { perform { service.restoreContextMessage(conversationId, message.id) } },
                             )) else Icon(HugeIcons.ArrowDown01, null) },
@@ -234,7 +232,7 @@ fun ContextWorkbench(conversationId: Uuid, initialMessageId: Uuid, onDismiss: ()
         service.getConversationFlow(conversationId).value.messageNodes.firstOrNull { it.id == nodes.firstOrNull() }?.let { messageId = it.currentMessage.id }
     }) }
     replayPart?.let { index -> AlertDialog(onDismissRequest = { replayPart = null }, title = { Text("重新执行此工具？") }, text = { Text("使用已保存的参数运行所选工具。工具可能产生外部副作用。") }, confirmButton = { TextButton(onClick = { perform { service.rerunContextTool(conversationId, messageId, index, confirmedSideEffects = true); replayPart = null } }) { Text("执行工具") } }, dismissButton = { TextButton(onClick = { replayPart = null }) { Text("取消") } }) }
-    gate?.let { active -> RequestPreviewDialog(active, onDismiss = { active.cancel(); gate = null }, onSend = { gate = null; if (requestConversationId != conversationId) { onDismiss(); navigateToChatPage(navigator, requestConversationId) } }) }
+    gate?.let { active -> RequestPreviewDialog(active, onDismiss = { active.cancel(); gate = null }, onSend = { gate = null; onDismiss() }) }
 }
 
 private fun partPreview(part: UIMessagePart?): String = when (part) {
